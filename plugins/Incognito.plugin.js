@@ -1,0 +1,1282 @@
+/**
+ * @name Incognito
+ * @description Stop tracking, hide typing, spoof fingerprints, and much more.
+ * @version 1.0.9
+ * @author Snues
+ * @invite xp2f3YFKMY
+ * @authorId 98862725609816064
+ * @source https://github.com/Snusene/BetterDiscordPlugins/tree/main/Incognito
+ * @donate https://ko-fi.com/snues
+ */
+
+// prettier-ignore
+const TRACKING_PARAMS = new Set(["__cft__","__hsfp","__hssc","__hstc","__s","__tn__","__twitter_impression","_bhlid","_branch_match_id","_branch_referrer","_ga","_gac","_gl","_hsenc","_hsmi","_kx","_openstat","_trkparms","_trksid","_ttp","action_object_map","action_ref_map","action_type_map","ad_id","adset_id","aff_id","aff_platform","aff_trace_key","affiliate_id","algo_expid","algo_pvid","ar_clx","ascsubtag","at_recipient_id","at_recipient_list","bbeml","bsft_clkid","bsft_uid","campaign_id","campid","click_id","clickid","cmpid","creative_id","curator_clanid","customid","dclid","dm_i","elqTrack","elqTrackId","epik","et_rid","fb_action_ids","fb_action_types","fb_comment_id","fb_ref","fb_source","fbclid","gbraid","gclid","gclsrc","gs_l","guce_referrer","guce_referrer_sig","hsa_acc","hsa_ad","hsa_cam","hsa_grp","hsa_kw","hsa_mt","hsa_net","hsa_src","hsa_tgt","hsa_ver","hsCtaTracking","igsh","igshid","irclickid","irgwc","itm_campaign","itm_medium","itm_source","itm_term","ito","li_fat_id","li_tc","mbid","mc_cid","mc_eid","mc_tc","mkcid","mkevt","mkrid","mkt_tok","mkwid","ml_subscriber","ml_subscriber_hash","msclkid","mtm_cid","ncid","ns_campaign","ns_fee","ns_linkname","ns_mchannel","ns_source","ob_click_id","oft_c","oft_ck","oft_d","oft_id","oft_ids","oft_k","oft_lk","oft_sk","oly_anon_id","oly_enc_id","os_ehash","pcrid","pk_campaign","pk_cid","pk_kwd","pkw","placement","pmt","pvid","ranEAID","ranMID","ranSiteID","rb_clickid","rdt","ref_src","ref_url","s_cid","s_kwcid","sc_cid","sc_customer","sc_eh","sc_uid","scm","sfmc_activityid","sfmc_id","si","slid","smid","sms_click","sms_source","sms_uph","smtyp","snr","spm","srsltid","ss_email_id","syclid","sznclid","terminal_id","toolid","tracking_source","trk","tt_content","tt_medium","ttclid","twclid","unicorn_click_id","utm_campaign","utm_cid","utm_content","utm_id","utm_medium","utm_name","utm_pubreferrer","utm_reader","utm_referrer","utm_social","utm_social-type","utm_source","utm_swu","utm_term","utm_viz_id","vero_conv","vero_id","vgo_ee","wbraid","wickedid","xtor","yclid","ymclid","ysclid","zanpid"]);
+
+// prettier-ignore
+const SITE_PARAMS = (() => {
+  const yt = new Set(["feature","pp","kw","is"]);
+  return {
+    amazon: new Set(["tag","ref","ref_","keywords","sr","qid","crid","sprefix","psc","rnid","_encoding","dchild","pd_rd_i","pd_rd_r","pd_rd_w","pd_rd_wg","pf_rd_i","pf_rd_m","pf_rd_p","pf_rd_r","pf_rd_s","pf_rd_t","dib","dib_tag","th","spIA","linkCode","creativeASIN","content-id","social_share","cv_ct_cx","cv_ct_id","cv_ct_pg","cv_ct_we","cv_ct_wn"]),
+    youtube: yt, youtu: yt,
+    x: new Set(["s","t","cn"]),
+    reddit: new Set(["share_id","correlation_id","ref_campaign","ref_source"]),
+  };
+})();
+
+// prettier-ignore
+const FRECENCY_FIELDS = new Set(["stickerFrecency", "emojiFrecency", "emojiReactionFrecency", "applicationCommandFrecency", "applicationFrecency", "guildAndChannelFrecency", "playedSoundFrecency", "heardSoundFrecency"]);
+
+const STAT_KEYS = [
+  "telemetryBlocked",
+  "usageProfilingBlocked",
+  "sentryBlocked",
+  "readReceiptsBlocked",
+  "typingIndicatorsBlocked",
+  "trackingUrlsStripped",
+  "idleSpoofed",
+  "filesAnonymized",
+  "imagesStripped",
+  "fingerprintsSpoofed",
+];
+
+module.exports = class Incognito {
+  static resolveModKey(mod, predicate = (v) => typeof v === "function") {
+    if (!mod) return null;
+    const key = Object.keys(mod).find((k) => predicate(mod[k]));
+    return key ? [mod, key] : null;
+  }
+
+  static resolveType2Manager(mod) {
+    if (!mod) return null;
+    for (const key of Object.keys(mod)) {
+      const val = mod[key];
+      if (
+        val &&
+        typeof val === "object" &&
+        val.type === 2 &&
+        typeof val.updateAsync === "function"
+      ) {
+        return val;
+      }
+    }
+    return null;
+  }
+
+  static getModules() {
+    const { Stores, Filters } = BdApi.Webpack;
+    const bySrc = (s) => (v) =>
+      typeof v === "function" && v.toString().includes(s);
+
+    const bulk = BdApi.Webpack.getBulkKeyed({
+      Analytics: { filter: Filters.byKeys("AnalyticEventConfigs") },
+      NativeModule: { filter: Filters.byKeys("getDiscordUtils") },
+      CrashReporter: { filter: (m) => m?.submitLiveCrashReport },
+      MessageActions: { filter: Filters.byKeys("sendMessage", "editMessage") },
+      SuperProperties: {
+        filter: Filters.byKeys(
+          "getSuperProperties",
+          "getSuperPropertiesBase64",
+        ),
+      },
+      Uploader: {
+        filter: (m) => m?.prototype?.uploadFileToCloud,
+        searchExports: true,
+      },
+      DebugOptionsStore: {
+        filter: Filters.byKeys("getDebugOptionsHeaderValue"),
+      },
+      MetricsModule: { filter: Filters.byKeys("increment", "distribution") },
+      ConsentModule: {
+        filter: Filters.bySource("SETTINGS_CONSENT"),
+        searchDefault: false,
+      },
+      HTTPModule: { filter: Filters.byKeys("Request", "post", "get", "del") },
+      _tzRaw: {
+        filter: Filters.bySource("resolvedOptions().timeZone"),
+        searchDefault: false,
+      },
+      _cmRaw: {
+        filter: Filters.bySource(".BetterDiscord"),
+        searchDefault: false,
+      },
+      _settingsProtoRaw: {
+        filter: Filters.bySource("updateAsync", "editInfo"),
+        searchDefault: false,
+      },
+      _clipRaw: {
+        filter: Filters.bySource("Clipboard API not supported"),
+        searchDefault: false,
+      },
+      _ctxRaw: {
+        filter: Filters.bySource("copy-native-link"),
+        searchDefault: false,
+      },
+    });
+
+    const { _tzRaw, _cmRaw, _settingsProtoRaw, _clipRaw, _ctxRaw, ...rest } =
+      bulk;
+
+    return {
+      ...rest,
+      ActivityTrackingStore: Stores.ActivityTrackingStore,
+      IdleStore: Stores.IdleStore,
+      ConsentStore: Stores.ConsentStore,
+      RunningGameStore: Stores.RunningGameStore,
+      Dispatcher: Stores.ReadStateStore?._dispatcher,
+      TimezoneModule: Incognito.resolveModKey(_tzRaw),
+      ClientModsModule: Incognito.resolveModKey(_cmRaw),
+      Type2Manager: Incognito.resolveType2Manager(_settingsProtoRaw),
+      Clipboard: Incognito.resolveModKey(
+        _clipRaw,
+        bySrc("Clipboard API not supported"),
+      ),
+      LinkMenu: Incognito.resolveModKey(_ctxRaw, bySrc("copy-native-link")),
+    };
+  }
+
+  constructor(meta) {
+    this.meta = meta;
+    this.api = new BdApi(meta.name);
+    this.patchers = {};
+    this.defaultSettings = {
+      blockTelemetry: true,
+      blockUsageProfiling: true,
+      blockErrorReporting: true,
+      blockProcessScanning: true,
+      blockReadReceipts: false,
+      disableIdle: true,
+      silentTyping: true,
+      spoofFingerprints: true,
+      hideClientMods: true,
+      stripUrlTrackers: true,
+      anonymiseFiles: true,
+      stripMetadata: true,
+    };
+  }
+
+  initStats() {
+    const defaultStats = Object.fromEntries(STAT_KEYS.map((k) => [k, 0]));
+    this.stats = { ...defaultStats, ...(this.api.Data.load("stats") ?? {}) };
+    this.sessionStats = { ...defaultStats };
+    this.saveStats = BdApi.Utils.debounce(
+      () => this.api.Data.save("stats", this.stats),
+      5000,
+    );
+  }
+
+  incrementStat(stat) {
+    this.stats[stat]++;
+    this.sessionStats[stat]++;
+    this.saveStats();
+  }
+
+  getPatcher(feature) {
+    if (!this.patchers[feature]) {
+      this.patchers[feature] = new BdApi(
+        `${this.meta.name}:${feature}`,
+      ).Patcher;
+    }
+    return this.patchers[feature];
+  }
+
+  start() {
+    const saved = this.api.Data.load("settings") ?? {};
+    if ("anonymiseFiles" in saved) saved.stripMetadata ??= saved.anonymiseFiles;
+    this.settings = { ...this.defaultSettings, ...saved };
+    this.failed = new Set(this.api.Data.load("failed") ?? []);
+    this.modules = Incognito.getModules();
+    this.initStats();
+
+    this.retryFailed();
+
+    for (const id of Object.keys(this.defaultSettings)) {
+      if (this.settings[id]) this.enableFeature(id);
+    }
+
+    this.injectStyles();
+  }
+
+  injectStyles() {
+    this.api.DOM.addStyle(`
+      .incognito-banner { text-align: center; padding: 16px; background: linear-gradient(135deg, var(--brand-500) 0%, var(--brand-560) 100%); border-radius: 8px; margin-bottom: 16px; }
+      .incognito-title { font-size: 12px; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+      .incognito-stats { display: flex; justify-content: center; gap: 32px; }
+      .incognito-divider { width: 1px; background: rgba(255,255,255,0.3); }
+      .incognito-stat { display: flex; flex-direction: column; align-items: center; }
+      .incognito-value { font-size: 32px; font-weight: 700; color: white; line-height: 1; }
+      .incognito-label { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 4px; }
+    `);
+  }
+
+  stop() {
+    for (const id of Object.keys(this.patchers)) this.disableFeature(id);
+
+    this.api.DOM.removeStyle();
+    this.saveStats?.cancel?.();
+    if (this.stats) {
+      this.api.Data.save("stats", this.stats);
+    }
+    this.settings = null;
+    this.failed = null;
+    this.modules = null;
+    this.stats = null;
+    this.sessionStats = null;
+    this.saveStats = null;
+  }
+
+  retryFailed() {
+    const featureModules = {
+      blockTelemetry: () => this.modules.Analytics,
+      blockUsageProfiling: () => this.modules.Type2Manager?.updateAsync,
+      blockErrorReporting: () =>
+        window.DiscordSentry?.getClient?.() || this.modules.CrashReporter,
+      blockProcessScanning: () =>
+        this.modules.NativeModule?.getDiscordUtils?.(),
+      blockReadReceipts: () => this.modules.HTTPModule?.Request?.prototype?.end,
+      disableIdle: () => this.modules.IdleStore,
+      silentTyping: () => this.modules.Dispatcher?.dispatch,
+      spoofFingerprints: () =>
+        this.modules.SuperProperties?.getSuperProperties ||
+        this.modules.TimezoneModule,
+      hideClientMods: () => this.modules.ClientModsModule,
+      stripUrlTrackers: () => this.modules.MessageActions?.sendMessage,
+      anonymiseFiles: () => this.modules.Uploader,
+      stripMetadata: () => this.modules.Uploader,
+    };
+
+    let retried = false;
+    for (const feature of [...this.failed]) {
+      const check = featureModules[feature];
+      if (check?.()) {
+        this.failed.delete(feature);
+        this.settings[feature] = true;
+        this.enableFeature(feature);
+        retried = true;
+      }
+    }
+
+    if (retried) {
+      this.saveSettings();
+      this.api.Data.save("failed", [...this.failed]);
+    }
+  }
+
+  markFailed(feature) {
+    this.settings[feature] = false;
+    this.failed.add(feature);
+    this.saveSettings();
+    this.api.Data.save("failed", [...this.failed]);
+  }
+
+  handleFailure(feature, failed = null) {
+    if (failed !== null && failed.length === 0) return;
+    this.markFailed(feature);
+    this.api.UI.showToast(`Incognito: ${feature} unavailable`, {
+      type: "warning",
+    });
+  }
+
+  blockTelemetry() {
+    const patcher = this.getPatcher("blockTelemetry");
+    const { Analytics } = this.modules;
+    let failed = [];
+
+    if (!Analytics) {
+      failed.push("events");
+    } else {
+      if (Analytics.default?.track) {
+        patcher.instead(Analytics.default, "track", () => {
+          this.incrementStat("telemetryBlocked");
+        });
+      } else {
+        failed.push("events");
+      }
+
+      if (Analytics.trackNetworkAction) {
+        patcher.instead(Analytics, "trackNetworkAction", () => {});
+      } else {
+        failed.push("network");
+      }
+
+      if (Analytics.debugLogEvent) {
+        patcher.instead(Analytics, "debugLogEvent", () => {});
+      } else {
+        failed.push("debug logs");
+      }
+    }
+
+    const { ActivityTrackingStore, MetricsModule } = this.modules;
+    if (ActivityTrackingStore?.getActivities) {
+      patcher.instead(ActivityTrackingStore, "getActivities", () => ({}));
+    } else {
+      failed.push("activity tracking");
+    }
+
+    if (MetricsModule) {
+      if (MetricsModule.increment) {
+        patcher.instead(MetricsModule, "increment", () => {});
+      }
+      if (MetricsModule.distribution) {
+        patcher.instead(MetricsModule, "distribution", () => {});
+      }
+    } else {
+      failed.push("metrics");
+    }
+
+    const { ConsentStore, ConsentModule, DebugOptionsStore } = this.modules;
+    if (ConsentStore?.hasConsented) {
+      patcher.instead(ConsentStore, "hasConsented", () => false);
+    } else {
+      failed.push("consents");
+    }
+
+    if (DebugOptionsStore?.getDebugOptionsHeaderValue) {
+      patcher.instead(
+        DebugOptionsStore,
+        "getDebugOptionsHeaderValue",
+        () => null,
+      );
+    } else {
+      failed.push("debug options");
+    }
+
+    if (ConsentModule?.Q && ConsentModule?.U) {
+      ConsentModule.Q()
+        .then((consents) => {
+          const toRevoke = [];
+          if (consents.usage_statistics?.consented)
+            toRevoke.push("usage_statistics");
+          if (consents.personalization?.consented)
+            toRevoke.push("personalization");
+          if (toRevoke.length > 0) {
+            return ConsentModule.U([], toRevoke);
+          }
+        })
+        .catch(() => {});
+    }
+
+    const { HTTPModule } = this.modules;
+    const isTelemetryUrl = (url) =>
+      typeof url === "string" &&
+      /\/api\/v\d+\/(science|beaker|metrics|premium-marketing)/.test(url);
+
+    const RequestProto = HTTPModule?.Request?.prototype;
+    if (RequestProto?._end) {
+      patcher.instead(RequestProto, "_end", (thisObj, args, original) => {
+        if (thisObj.method === "POST" && isTelemetryUrl(thisObj.url)) {
+          this.incrementStat("telemetryBlocked");
+          return thisObj._callback(null, { ok: true, status: 200, body: {} });
+        }
+        return original.apply(thisObj, args);
+      });
+    } else {
+      failed.push("telemetry endpoints");
+    }
+
+    const { Dispatcher } = this.modules;
+    if (Dispatcher?.dispatch) {
+      patcher.before(Dispatcher, "dispatch", (_, [action]) => {
+        if (action.type === "CONTENT_INVENTORY_TRACK_ITEM_IMPRESSIONS") {
+          action.type = "__INCOGNITO_BLOCKED__";
+          this.incrementStat("telemetryBlocked");
+        }
+      });
+    }
+
+    this.handleFailure("blockTelemetry", failed);
+  }
+
+  blockUsageProfiling() {
+    const patcher = this.getPatcher("blockUsageProfiling");
+    const { Type2Manager } = this.modules;
+
+    if (!Type2Manager?.updateAsync) {
+      this.handleFailure("blockUsageProfiling");
+      return;
+    }
+
+    patcher.instead(
+      Type2Manager,
+      "updateAsync",
+      (thisObj, args, original) => {
+        if (FRECENCY_FIELDS.has(args[0])) {
+          this.incrementStat("usageProfilingBlocked");
+          return Promise.resolve();
+        }
+        return original.apply(thisObj, args);
+      },
+    );
+
+    let lastStat = 0;
+    this._callbackCheckInterval = setInterval(() => {
+      const cbs = Type2Manager.beforeSendCallbacks;
+      if (!Array.isArray(cbs) || cbs.length <= 1) return;
+      clearInterval(this._callbackCheckInterval);
+      this._callbackCheckInterval = null;
+      this._originalCallbacks = cbs.map((cb) => ({
+        hasChanges: cb.hasChanges,
+        processProto: cb.processProto,
+      }));
+      for (let i = 1; i < cbs.length; i++) {
+        const orig = this._originalCallbacks[i];
+        if (!cbs[i] || !orig) continue;
+        cbs[i].hasChanges = () => {
+          if (orig.hasChanges?.() && Date.now() - lastStat > 10000) {
+            this.incrementStat("usageProfilingBlocked");
+            lastStat = Date.now();
+          }
+          return false;
+        };
+        cbs[i].processProto = () => {};
+      }
+    }, 500);
+  }
+
+  restoreBeforeSendCallbacks() {
+    if (!this._originalCallbacks) return;
+    const cbs = this.modules?.Type2Manager?.beforeSendCallbacks;
+    if (Array.isArray(cbs)) {
+      for (
+        let i = 1;
+        i < cbs.length && i < this._originalCallbacks.length;
+        i++
+      ) {
+        if (cbs[i] && this._originalCallbacks[i]) {
+          cbs[i].hasChanges = this._originalCallbacks[i].hasChanges;
+          cbs[i].processProto = this._originalCallbacks[i].processProto;
+        }
+      }
+    }
+    this._originalCallbacks = null;
+  }
+
+  blockErrorReporting() {
+    const patcher = this.getPatcher("blockErrorReporting");
+    const { CrashReporter } = this.modules;
+    let failed = [];
+
+    const client = window.DiscordSentry?.getClient?.();
+    if (!client) {
+      failed.push("sentry");
+    } else {
+      const transport = client.getTransport?.();
+      if (transport?.send) {
+        patcher.instead(transport, "send", () => {
+          this.incrementStat("sentryBlocked");
+          return Promise.resolve({});
+        });
+      } else {
+        failed.push("sentry transport");
+      }
+    }
+
+    if (CrashReporter?.submitLiveCrashReport) {
+      patcher.instead(CrashReporter, "submitLiveCrashReport", () => {});
+    } else {
+      failed.push("crash reports");
+    }
+
+    this.handleFailure("blockErrorReporting", failed);
+  }
+
+  blockProcessScanning() {
+    const patcher = this.getPatcher("blockProcessScanning");
+    const { NativeModule, RunningGameStore } = this.modules;
+    let failed = [];
+
+    const DiscordUtils = NativeModule?.getDiscordUtils?.();
+    if (DiscordUtils) {
+      if (DiscordUtils.setObservedGamesCallback) {
+        DiscordUtils.setObservedGamesCallback([], () => {});
+        patcher.instead(DiscordUtils, "setObservedGamesCallback", () => {});
+      } else {
+        failed.push("observedGames");
+      }
+
+      if (DiscordUtils.setObservedGamesCallback2) {
+        DiscordUtils.setObservedGamesCallback2([], () => {});
+        patcher.instead(DiscordUtils, "setObservedGamesCallback2", () => {});
+      } else {
+        failed.push("observedGames2");
+      }
+
+      if (DiscordUtils.setGameDetectionCallback) {
+        DiscordUtils.setGameDetectionCallback(() => {});
+        patcher.instead(DiscordUtils, "setGameDetectionCallback", () => {});
+      } else {
+        failed.push("gameDetection");
+      }
+
+      if (DiscordUtils.setCandidateGamesCallback) {
+        DiscordUtils.setCandidateGamesCallback(() => {});
+        patcher.instead(DiscordUtils, "setCandidateGamesCallback", () => {});
+      } else {
+        failed.push("candidateGames");
+      }
+    } else {
+      failed.push("DiscordUtils");
+    }
+
+    if (NativeModule) {
+      patcher.instead(
+        NativeModule,
+        "ensureModule",
+        (thisObj, args, original) => {
+          if (args[0]?.includes("discord_rpc")) return;
+          return original.apply(thisObj, args);
+        },
+      );
+    } else {
+      failed.push("RPC");
+    }
+
+    if (RunningGameStore) {
+      for (const k of [
+        "getVisibleGame",
+        "getCurrentGameForAnalytics",
+        "getCurrentNonGameForAnalytics",
+      ]) {
+        if (RunningGameStore[k]) patcher.instead(RunningGameStore, k, () => null);
+      }
+      for (const k of [
+        "getVisibleRunningGames",
+        "getRunningGames",
+        "getRunningNonGames",
+        "getCandidateGames",
+      ]) {
+        if (RunningGameStore[k]) patcher.instead(RunningGameStore, k, () => []);
+      }
+    } else {
+      failed.push("RunningGameStore");
+    }
+
+    this.handleFailure("blockProcessScanning", failed);
+  }
+
+  enableProcessMonitor() {
+    this.api.UI.showConfirmationModal(
+      "Reload Discord?",
+      "To re-enable process monitoring Discord needs to be reloaded.",
+      {
+        confirmText: "Reload",
+        cancelText: "Later",
+        onConfirm: () => window.location.reload(),
+      },
+    );
+  }
+
+  blockReadReceipts() {
+    const patcher = this.getPatcher("blockReadReceipts");
+    const { HTTPModule } = this.modules;
+    const RequestProto = HTTPModule?.Request?.prototype;
+
+    if (!RequestProto?.end) {
+      this.handleFailure("blockReadReceipts");
+      return;
+    }
+
+    const isAckUrl = (url) =>
+      typeof url === "string" &&
+      /\/channels\/\d+\/(?:messages\/\d+|pins)\/ack|\/read-states\/ack-bulk|\/guilds\/\d+\/ack\/\d+\/\d+|\/users\/@me\/(?:\d+\/\d+\/|notification-center\/items\/(?:\d+\/)?(?:bulk-)?)ack/.test(
+        url,
+      );
+
+    patcher.instead(RequestProto, "end", (thisObj, args, original) => {
+      if (thisObj.method === "POST" && isAckUrl(thisObj.url)) {
+        this.incrementStat("readReceiptsBlocked");
+        const callback = args[0];
+        if (typeof callback === "function") {
+          callback(null, { ok: true, status: 200, body: {} });
+        }
+        return thisObj;
+      }
+      return original.apply(thisObj, args);
+    });
+  }
+
+  disableIdle() {
+    const patcher = this.getPatcher("disableIdle");
+    const { IdleStore } = this.modules;
+
+    if (!IdleStore) {
+      this.handleFailure("disableIdle");
+      return;
+    }
+
+    patcher.instead(IdleStore, "isIdle", (thisObj, args, original) => {
+      if (original.apply(thisObj, args)) {
+        this.incrementStat("idleSpoofed");
+      }
+      return false;
+    });
+    patcher.instead(IdleStore, "isAFK", () => false);
+    patcher.instead(IdleStore, "getIdleSince", () => null);
+  }
+
+  silentTyping() {
+    const patcher = this.getPatcher("silentTyping");
+    const { Dispatcher } = this.modules;
+
+    if (!Dispatcher?.dispatch) {
+      this.handleFailure("silentTyping");
+      return;
+    }
+
+    let lastTypingStat = 0;
+    patcher.before(Dispatcher, "dispatch", (_, [action]) => {
+      if (action.type === "TYPING_START_LOCAL") {
+        action.type = "__INCOGNITO_BLOCKED__";
+        const now = Date.now();
+        if (now - lastTypingStat > 10000) {
+          this.incrementStat("typingIndicatorsBlocked");
+          lastTypingStat = now;
+        }
+      }
+    });
+  }
+
+  spoofFingerprints() {
+    const patcher = this.getPatcher("spoofFingerprints");
+    const { SuperProperties, TimezoneModule } = this.modules;
+    let failed = [];
+
+    if (SuperProperties?.getSuperProperties) {
+      let lastFingerprintStat = 0;
+      patcher.after(SuperProperties, "getSuperProperties", (_, __, ret) => {
+        ret.system_locale = "en-US";
+        ret.client_app_state = "focused";
+        const now = Date.now();
+        if (now - lastFingerprintStat > 10000) {
+          this.incrementStat("fingerprintsSpoofed");
+          lastFingerprintStat = now;
+        }
+      });
+
+      patcher.instead(SuperProperties, "getSuperPropertiesBase64", () => {
+        return btoa(JSON.stringify(SuperProperties.getSuperProperties()));
+      });
+    } else {
+      failed.push("locale");
+    }
+
+    if (Array.isArray(TimezoneModule)) {
+      const [tzMod, tzKey] = TimezoneModule;
+      patcher.instead(tzMod, tzKey, () => null);
+    } else {
+      failed.push("timezone");
+    }
+
+    this.handleFailure("spoofFingerprints", failed);
+  }
+
+  hideClientMods() {
+    const patcher = this.getPatcher("hideClientMods");
+    const { ClientModsModule } = this.modules;
+
+    if (!Array.isArray(ClientModsModule)) {
+      this.handleFailure("hideClientMods");
+      return;
+    }
+
+    const [modObj, modKey] = ClientModsModule;
+    patcher.instead(modObj, modKey, () => false);
+  }
+
+  stripTrackingParams(content) {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    return content.replace(urlRegex, (url) => {
+      try {
+        const trailing = url.match(/[),.;:!?>]+$/)?.[0] ?? "";
+        const cleanInput = url.slice(0, url.length - trailing.length);
+
+        const qIndex = cleanInput.indexOf("?");
+        if (qIndex === -1) return url;
+
+        let base = cleanInput.slice(0, qIndex);
+        const host = base.slice(base.indexOf("//") + 2).split("/")[0];
+        const siteKey = host
+          .split(".")
+          .slice(-3, -1)
+          .find((l) => SITE_PARAMS[l]);
+        const sitePars = SITE_PARAMS[siteKey];
+        if (siteKey === "amazon") base = base.replace(/\/ref=[^/?#]*/, "");
+        const hashIndex = cleanInput.indexOf("#", qIndex);
+        const queryEnd = hashIndex === -1 ? cleanInput.length : hashIndex;
+        const query = cleanInput.slice(qIndex + 1, queryEnd);
+        const hash = cleanInput.slice(queryEnd);
+
+        const params = query.split("&");
+        const kept = params.filter((p) => {
+          const key = decodeURIComponent(p.split("=")[0]);
+          if (TRACKING_PARAMS.has(key) || sitePars?.has(key)) return false;
+          if (siteKey === "amazon" && key.startsWith("__mk_")) return false;
+          return true;
+        });
+
+        if (kept.length === params.length) return url;
+        return (
+          base + (kept.length ? "?" + kept.join("&") : "") + hash + trailing
+        );
+      } catch {
+        return url;
+      }
+    });
+  }
+
+  stripUrlTrackers() {
+    const patcher = this.getPatcher("stripUrlTrackers");
+    const { MessageActions } = this.modules;
+
+    if (!MessageActions?.sendMessage) {
+      this.handleFailure("stripUrlTrackers");
+      return;
+    }
+
+    const ifChanged = (input, apply) => {
+      if (typeof input !== "string") return;
+      const sanitized = this.stripTrackingParams(input);
+      if (sanitized === input) return;
+      apply(sanitized);
+      this.incrementStat("trackingUrlsStripped");
+    };
+
+    patcher.before(MessageActions, "sendMessage", (_, [, msg]) =>
+      ifChanged(msg?.content, (s) => {
+        msg.content = s;
+      }),
+    );
+    if (MessageActions.editMessage) {
+      patcher.before(MessageActions, "editMessage", (_, [, , msg]) =>
+        ifChanged(msg?.content, (s) => {
+          msg.content = s;
+        }),
+      );
+    }
+
+    for (const name of ["Clipboard", "LinkMenu"]) {
+      const [m, k] = this.modules[name] || [];
+      if (m)
+        patcher.before(m, k, (_, args) =>
+          ifChanged(args[0], (s) => {
+            args[0] = s;
+          }),
+        );
+    }
+
+    this.copyHandler = (e) =>
+      ifChanged(window.getSelection()?.toString(), (s) => {
+        e.preventDefault();
+        e.clipboardData.setData("text/plain", s);
+      });
+
+    document.addEventListener("copy", this.copyHandler, true);
+  }
+
+  disableClipboardHandlers() {
+    if (this.copyHandler) {
+      document.removeEventListener("copy", this.copyHandler, true);
+      this.copyHandler = null;
+    }
+  }
+
+  randomString(length) {
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    return Array.from(
+      crypto.getRandomValues(new Uint8Array(length)),
+      (v) => chars[v % chars.length],
+    ).join("");
+  }
+
+  getExtension(filename) {
+    const idx = filename.lastIndexOf(".");
+    if (idx === -1) return "";
+    const ext = filename.slice(idx);
+    const tar = filename.slice(0, idx);
+    if (tar.endsWith(".tar")) return ".tar" + ext;
+    return ext;
+  }
+
+  generateFilename(original) {
+    return this.randomString(7) + this.getExtension(original);
+  }
+
+  async stripImageMetadata(file) {
+    if (
+      !file.type?.startsWith("image/") ||
+      file.type === "image/gif" ||
+      file.type === "image/svg+xml"
+    ) {
+      return file;
+    }
+
+    try {
+      const buf = await file.arrayBuffer();
+      let stripped;
+
+      if (file.type === "image/jpeg") stripped = this.stripJpegMeta(buf);
+      else if (file.type === "image/png") stripped = this.stripPngMeta(buf);
+      else if (file.type === "image/webp") stripped = this.stripWebpMeta(buf);
+
+      if (!stripped) return file;
+
+      return new File([stripped], file.name, {
+        type: file.type,
+        lastModified: Date.now(),
+      });
+    } catch {
+      return file;
+    }
+  }
+
+  stripJpegMeta(buf) {
+    const view = new DataView(buf);
+    if (buf.byteLength < 4 || view.getUint16(0) !== 0xffd8) return null;
+
+    const parts = [new Uint8Array(buf, 0, 2)];
+    let offset = 2;
+
+    while (offset + 1 < buf.byteLength) {
+      const marker = view.getUint16(offset);
+
+      if (marker === 0xffda) {
+        parts.push(new Uint8Array(buf, offset));
+        break;
+      }
+
+      if ((marker & 0xff00) !== 0xff00) return null;
+      if (offset + 3 >= buf.byteLength) return null;
+
+      const segLen = view.getUint16(offset + 2);
+      if (segLen < 2 || offset + 2 + segLen > buf.byteLength) return null;
+
+      const isMeta =
+        (marker >= 0xffe1 && marker <= 0xffef) || marker === 0xfffe;
+      if (!isMeta) {
+        parts.push(new Uint8Array(buf, offset, 2 + segLen));
+      }
+
+      offset += 2 + segLen;
+    }
+
+    return new Blob(parts, { type: "image/jpeg" });
+  }
+
+  stripPngMeta(buf) {
+    const view = new DataView(buf);
+    if (
+      buf.byteLength < 8 ||
+      view.getUint32(0) !== 0x89504e47 ||
+      view.getUint32(4) !== 0x0d0a1a0a
+    ) {
+      return null;
+    }
+
+    const keep = new Set([
+      "IHDR",
+      "PLTE",
+      "IDAT",
+      "IEND",
+      "tRNS",
+      "sRGB",
+      "gAMA",
+      "cHRM",
+      "sBIT",
+      "pHYs",
+      "bKGD",
+      "acTL",
+      "fcTL",
+      "fdAT",
+    ]);
+    const parts = [new Uint8Array(buf, 0, 8)];
+    let offset = 8;
+
+    while (offset + 12 <= buf.byteLength) {
+      const dataLen = view.getUint32(offset);
+      const total = dataLen + 12;
+      if (offset + total > buf.byteLength) break;
+
+      const type = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7),
+      );
+
+      if (keep.has(type)) {
+        parts.push(new Uint8Array(buf, offset, total));
+      }
+
+      offset += total;
+      if (type === "IEND") break;
+    }
+
+    return new Blob(parts, { type: "image/png" });
+  }
+
+  stripWebpMeta(buf) {
+    const view = new DataView(buf);
+    if (
+      buf.byteLength < 12 ||
+      view.getUint32(0) !== 0x52494646 ||
+      view.getUint32(8) !== 0x57454250
+    ) {
+      return null;
+    }
+
+    const strip = new Set(["EXIF", "XMP ", "ICCP"]);
+    const chunks = [];
+    let offset = 12;
+
+    while (offset + 8 <= buf.byteLength) {
+      const fourCC = String.fromCharCode(
+        view.getUint8(offset),
+        view.getUint8(offset + 1),
+        view.getUint8(offset + 2),
+        view.getUint8(offset + 3),
+      );
+      const chunkSize = view.getUint32(offset + 4, true);
+      const totalLen = 8 + chunkSize + (chunkSize % 2);
+      if (offset + totalLen > buf.byteLength) break;
+
+      if (strip.has(fourCC)) {
+        offset += totalLen;
+        continue;
+      }
+
+      if (fourCC === "VP8X") {
+        const chunk = new Uint8Array(buf.slice(offset, offset + totalLen));
+        chunk[8] &= ~0x2c;
+        chunks.push(chunk);
+      } else {
+        chunks.push(new Uint8Array(buf, offset, totalLen));
+      }
+
+      offset += totalLen;
+    }
+
+    let payloadSize = 4;
+    for (const c of chunks) payloadSize += c.byteLength;
+
+    const header = new ArrayBuffer(12);
+    const hv = new DataView(header);
+    hv.setUint32(0, 0x52494646);
+    hv.setUint32(4, payloadSize, true);
+    hv.setUint32(8, 0x57454250);
+
+    return new Blob([header, ...chunks], { type: "image/webp" });
+  }
+
+  anonymiseFiles() {
+    const patcher = this.getPatcher("anonymiseFiles");
+    const { Uploader } = this.modules;
+
+    if (!Uploader?.prototype?.upload) {
+      this.handleFailure("anonymiseFiles");
+      return;
+    }
+
+    patcher.before(Uploader.prototype, "upload", (u) => {
+      if (u._renamed || u.status === "COMPLETED") return;
+      const file = u.item?.file;
+      const name = u.filename || file?.name;
+      if (!name) return;
+      const newName = this.generateFilename(name);
+      u.filename = newName;
+      if (file) {
+        u.item.file = new File([file], newName, {
+          type: file.type,
+          lastModified: file.lastModified,
+        });
+      }
+      u._renamed = true;
+      this.incrementStat("filesAnonymized");
+    });
+  }
+
+  stripMetadata() {
+    const patcher = this.getPatcher("stripMetadata");
+    const { Uploader } = this.modules;
+
+    if (!Uploader?.prototype?.upload) {
+      this.handleFailure("stripMetadata");
+      return;
+    }
+
+    patcher.instead(Uploader.prototype, "upload", async (u, args, original) => {
+      if (!u._stripped && u.status !== "COMPLETED") {
+        u._stripped = true;
+        const file = u.item?.file;
+        if (file) {
+          const cleaned = await this.stripImageMetadata(file);
+          if (cleaned !== file) {
+            u.item.file = cleaned;
+            u.currentSize = u.preCompressionSize = cleaned.size;
+            if (u.item.compressionMetadata) {
+              u.item.compressionMetadata.preCompressionSize = cleaned.size;
+            }
+            u._originalMd5 = null;
+            this.incrementStat("imagesStripped");
+          }
+        }
+      }
+      return original.apply(u, args);
+    });
+  }
+
+  disableFeature(feature) {
+    if (feature === "blockUsageProfiling") {
+      if (this._callbackCheckInterval) {
+        clearInterval(this._callbackCheckInterval);
+        this._callbackCheckInterval = null;
+      }
+      this.restoreBeforeSendCallbacks();
+    }
+    if (feature === "stripUrlTrackers") {
+      this.disableClipboardHandlers();
+    }
+    if (this.patchers[feature]) {
+      this.patchers[feature].unpatchAll();
+      delete this.patchers[feature];
+    }
+  }
+
+  enableFeature(id) {
+    this.disableFeature(id);
+    this[id]?.();
+  }
+
+  saveSettings() {
+    this.api.Data.save("settings", this.settings);
+  }
+
+  getSettingsPanel() {
+    const { React } = BdApi;
+    const plugin = this;
+
+    const Banner = () => {
+      const [, forceUpdate] = BdApi.Hooks.useForceUpdate();
+
+      React.useEffect(() => {
+        const interval = setInterval(forceUpdate, 1000);
+        return () => clearInterval(interval);
+      }, []);
+
+      const formatNumber = (num) => {
+        if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
+        if (num >= 1000) return (num / 1000).toFixed(1) + "K";
+        return num.toLocaleString();
+      };
+
+      const getTotalBlocked = (stats) => {
+        return STAT_KEYS.reduce((sum, key) => sum + (stats[key] || 0), 0);
+      };
+
+      return React.createElement(
+        "div",
+        { className: "incognito-banner" },
+        React.createElement(
+          "div",
+          { className: "incognito-title" },
+          "Privacy Actions",
+        ),
+        React.createElement(
+          "div",
+          { className: "incognito-stats" },
+          React.createElement(
+            "div",
+            { className: "incognito-stat" },
+            React.createElement(
+              "div",
+              { className: "incognito-value" },
+              formatNumber(getTotalBlocked(plugin.sessionStats)),
+            ),
+            React.createElement(
+              "div",
+              { className: "incognito-label" },
+              "This Session",
+            ),
+          ),
+          React.createElement("div", { className: "incognito-divider" }),
+          React.createElement(
+            "div",
+            { className: "incognito-stat" },
+            React.createElement(
+              "div",
+              { className: "incognito-value" },
+              formatNumber(getTotalBlocked(plugin.stats)),
+            ),
+            React.createElement(
+              "div",
+              { className: "incognito-label" },
+              "All Time",
+            ),
+          ),
+        ),
+      );
+    };
+
+    const banner = React.createElement(Banner);
+
+    const settingToStat = {
+      blockTelemetry: { key: "telemetryBlocked", label: "blocked" },
+      blockUsageProfiling: { key: "usageProfilingBlocked", label: "blocked" },
+      blockErrorReporting: { key: "sentryBlocked", label: "blocked" },
+      blockReadReceipts: { key: "readReceiptsBlocked", label: "blocked" },
+      disableIdle: { key: "idleSpoofed", label: "spoofed" },
+      silentTyping: { key: "typingIndicatorsBlocked", label: "hidden" },
+      spoofFingerprints: { key: "fingerprintsSpoofed", label: "spoofed" },
+      stripUrlTrackers: { key: "trackingUrlsStripped", label: "stripped" },
+      anonymiseFiles: { key: "filesAnonymized", label: "randomised" },
+      stripMetadata: { key: "imagesStripped", label: "stripped" },
+    };
+
+    const settingsConfig = [
+      {
+        id: "blockTelemetry",
+        name: "Block Telemetry",
+        note: "Stops Discord's analytics, performance metrics, activity reporting, and Nitro promo tracking.",
+      },
+      {
+        id: "blockUsageProfiling",
+        name: "Block Usage Profiling",
+        note: "Prevents Discord from collecting emoji, sticker, command, and channel usage frequency data.",
+      },
+      {
+        id: "blockErrorReporting",
+        name: "Block Error Reporting",
+        note: "Intercepts Sentry error reports and crash reports before they reach Discord.",
+      },
+      {
+        id: "blockProcessScanning",
+        name: "Block Process Scanning",
+        note: "Stops Discord from seeing any processes running on your PC.",
+      },
+      {
+        id: "blockReadReceipts",
+        name: "Block Read Tracking",
+        note: "Prevents Discord from knowing which messages you've read. They show as unread on restart.",
+      },
+      {
+        id: "disableIdle",
+        name: "Disable Idle",
+        note: "Keeps your status active so Discord and other users won't see you as idle or AFK.",
+      },
+      {
+        id: "silentTyping",
+        name: "Silent Typing",
+        note: "Hides your typing indicator from everyone.",
+      },
+      {
+        id: "spoofFingerprints",
+        name: "Spoof Fingerprints",
+        note: "Spoofs your locale, timezone, and Discord's focus state.",
+      },
+      {
+        id: "hideClientMods",
+        name: "Hide Client Mods",
+        note: "Prevents Discord from detecting BetterDiscord and other client mods.",
+      },
+      {
+        id: "stripUrlTrackers",
+        name: "Strip URL Trackers",
+        note: "Removes common tracking parameters from URLs you send or copy.",
+      },
+      {
+        id: "anonymiseFiles",
+        name: "Randomise File Names",
+        note: "Renames each file to random characters before upload.",
+      },
+      {
+        id: "stripMetadata",
+        name: "Strip Image Metadata",
+        note: "Wipes GPS location, camera model, and other hidden data before Discord ever sees it.",
+      },
+    ];
+
+    const handleChange = (id, value) => {
+      this.settings[id] = value;
+      this.saveSettings();
+
+      if (value) {
+        this.enableFeature(id);
+      } else {
+        this.disableFeature(id);
+        if (id === "blockProcessScanning") this.enableProcessMonitor();
+      }
+    };
+
+    const getName = (config) => {
+      const stat = settingToStat[config.id];
+      if (!stat) return config.name;
+
+      const isFailed = this.failed.has(config.id);
+      const count = plugin.sessionStats[stat.key] || 0;
+
+      return React.createElement(
+        React.Fragment,
+        null,
+        config.name,
+        React.createElement(
+          "span",
+          {
+            style: {
+              fontSize: "12px",
+              fontWeight: "normal",
+              color: isFailed ? "var(--status-warning)" : "var(--text-muted)",
+              marginLeft: "8px",
+            },
+          },
+          isFailed
+            ? "· unavailable due to Discord changes"
+            : `· ${count.toLocaleString()} ${stat.label}`,
+        ),
+      );
+    };
+
+    const settingsPanel = this.api.UI.buildSettingsPanel({
+      settings: settingsConfig.map((config) => ({
+        type: "switch",
+        id: config.id,
+        name: getName(config),
+        note: config.note,
+        value: this.settings[config.id],
+        disabled: this.failed.has(config.id),
+      })),
+      onChange: (_, id, value) => handleChange(id, value),
+    });
+
+    const { Text } = BdApi.Components;
+    const footer = React.createElement(
+      Text,
+      {
+        color: Text.Colors.MUTED,
+        size: Text.Sizes.SIZE_12,
+        style: { textAlign: "center", padding: "16px" },
+      },
+      "Made with \u2764\uFE0F for privacy by ",
+      React.createElement(
+        Text,
+        {
+          tag: "a",
+          color: Text.Colors.LINK,
+          size: Text.Sizes.SIZE_12,
+          href: "https://discord.com/users/98862725609816064",
+          style: { textDecoration: "none" },
+        },
+        "Snues",
+      ),
+      ".",
+      React.createElement("br"),
+      "Bugs, feedback, or suggestions? Let me know on Discord.",
+    );
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      banner,
+      settingsPanel,
+      footer,
+    );
+  }
+};

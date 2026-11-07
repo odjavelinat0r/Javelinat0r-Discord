@@ -1,0 +1,93 @@
+{
+    "version":  1,
+    "published":  "2026-11-07T02:16:22.2562495Z",
+    "plugins":  [
+                    {
+                        "name":  "0BDFDB.data.json",
+                        "sha256":  "04a0656e845bdc887850628a416c92dd4a53a19eec466ce9cbf1fa54963bed20",
+                        "size":  341174
+                    },
+                    {
+                        "name":  "0BDFDB.plugin.js",
+                        "sha256":  "b19a521e026922750b882ecff61fe65413093b9b4d903798a1a9a08540ae3881",
+                        "size":  483618
+                    },
+                    {
+                        "name":  "0BDFDB.raw.css",
+                        "sha256":  "5253c22d52b373f589c50e5406fdb0c3ac6afe297719c784bfb2c872793308b5",
+                        "size":  47026
+                    },
+                    {
+                        "name":  "AutoDNDOnGame.plugin.js",
+                        "sha256":  "b5067b3a7c67bf1e213cf5c5d40df10dd7afd28817137f99986265965d5834a5",
+                        "size":  11497
+                    },
+                    {
+                        "name":  "BypassBlockedOrIgnored.plugin.js",
+                        "sha256":  "557bf30347a27984db6b152c0b66ef10ec8396c1c685c818812e382bcdca38bf",
+                        "size":  5648
+                    },
+                    {
+                        "name":  "CameraQuality.plugin.js",
+                        "sha256":  "f7229bbc546137415c8261c1241f02cb5c0a73dcb1ab0a0d55bd8e551c6a461d",
+                        "size":  9718
+                    },
+                    {
+                        "name":  "Incognito.plugin.js",
+                        "sha256":  "d562fd9d2f3f0008c3b8f1a24cb178f15d1d8b0346df198897d8b878dc9aae5d",
+                        "size":  40350
+                    },
+                    {
+                        "name":  "Javelinat0reo.plugin.js",
+                        "sha256":  "300920bcff601f5ff666e3f8ac37990a9910f135fb15b69a0a8444ce28dd25d5",
+                        "size":  5811
+                    },
+                    {
+                        "name":  "MentionFix.plugin.js",
+                        "sha256":  "28bc031b0653abb3bf9bc98bdff5a64fff6d0072eaca22eabb454c0a333a8629",
+                        "size":  4594
+                    },
+                    {
+                        "name":  "NoPushToTalk.plugin.js",
+                        "sha256":  "8af5a5bc5059b8c2b5daa02a788ed82e12747cfaf15fd4a7487b254612b0ff78",
+                        "size":  1792
+                    },
+                    {
+                        "name":  "Quoter.plugin.js",
+                        "sha256":  "914b4f14644e5fec4c53c2ec593199a51850e174b3bbc2144e383522aaa05d30",
+                        "size":  9970
+                    },
+                    {
+                        "name":  "ReadAllNotificationsButton.plugin.js",
+                        "sha256":  "ea1bda45ee3734340e0c95574bebd76e8076bd2edbb722702f59191f29b42bfc",
+                        "size":  35542
+                    },
+                    {
+                        "name":  "StaffTag.plugin.js",
+                        "sha256":  "100c39e0c169eefd3cc65ce24100990b9c1d51633ea6ebc618b0a14372d3a425",
+                        "size":  25226
+                    },
+                    {
+                        "name":  "VillainStereo.plugin.js",
+                        "sha256":  "1399cd96701910611c446fe359be12cae30b6e901ccecdbb0bb5f1e175f8eba3",
+                        "size":  1815
+                    },
+                    {
+                        "name":  "VoiceMessages.plugin.js",
+                        "sha256":  "72a88a1ea04ea362b851c333b7af57f431acf7ea43f0edac969ac52a9173d275",
+                        "size":  26927
+                    },
+                    {
+                        "name":  "YABDP4Nitro.plugin.js",
+                        "sha256":  "641fbe00c2e615ef1d0072c49ce8f026261952190fc6f1c2a811bf77bcb23556",
+                        "size":  317301
+                    }
+                ],
+    "scripts":  [
+                    {
+                        "name":  "Discord-TrueStereo.ps1",
+                        "sha256":  "e35f0c30b6c0e8010fe0c4a711c97d35d7db7874f4d1c388e0beccf96c04ff0b",
+                        "size":  19805
+                    }
+                ]
+}
