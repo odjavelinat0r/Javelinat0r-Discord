@@ -1,6 +1,6 @@
 {
-    "version":  13,
-    "published":  "2026-11-07T07:13:55.7503073Z",
+    "version":  14,
+    "published":  "2026-11-07T07:18:00.1893291Z",
     "notes":  "",
     "plugins":  [
                     {
@@ -110,6 +110,6 @@
                     }
                 ],
     "app":  {
-                "version":  6
+                "version":  7
             }
 }
