@@ -1,6 +1,6 @@
 {
-    "version":  9,
-    "published":  "2026-11-07T05:49:54.3732829Z",
+    "version":  10,
+    "published":  "2026-11-07T06:16:34.1519537Z",
     "notes":  "",
     "plugins":  [
                     {
@@ -30,8 +30,8 @@
                     },
                     {
                         "name":  "CameraQuality.plugin.js",
-                        "sha256":  "6f1bf19966ab8d23bd80cc8439293ee6e4074a410759994736921280dcdfcb22",
-                        "size":  14345
+                        "sha256":  "be538e140541c44983e3f90b5a98a657e202ac52c4589697363fa5831a644661",
+                        "size":  18399
                     },
                     {
                         "name":  "Incognito.plugin.js",

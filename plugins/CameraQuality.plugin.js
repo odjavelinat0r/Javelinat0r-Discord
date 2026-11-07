@@ -1,7 +1,7 @@
 /**
  * @name CameraQuality
  * @author Kerminat0r
- * @version 1.0.0
+ * @version 1.1.0
  * @description Ajoute une section « Qualité caméra » au menu de la caméra pour choisir la résolution (p), les FPS et le débit de ta caméra, avec des valeurs libres.
  */
 
@@ -18,6 +18,14 @@ const HEIGHT_CHOICES = [36, 72, 144, 240, 360, 480, 720, 1080];
 const FPS_CHOICES = [1, 5, 10, 15, 24, 30, 60];
 const BITRATE_CHOICES = [50, 150, 300, 600, 1500, 2500];
 
+const PRESET_LIMIT = 20;
+const PRESET_NAME_LIMIT = 32;
+const BUILT_IN_PRESETS = [
+  { name: "Faible connexion", height: 360, fps: 15, bitrate: 300 },
+  { name: "Équilibré", height: 720, fps: 30, bitrate: 1500 },
+  { name: "Qualité max", height: 1080, fps: 30, bitrate: 2500 }
+];
+
 module.exports = class CameraQuality {
   constructor(meta) {
     this.meta = meta;
@@ -31,6 +39,36 @@ module.exports = class CameraQuality {
   set(patch) {
     BdApi.Data.save(PLUGIN, "settings", { ...this.settings, ...patch });
     this.reapply();
+  }
+
+  get presets() {
+    const saved = BdApi.Data.load(PLUGIN, "presets");
+    return Array.isArray(saved) ? saved : [];
+  }
+
+  applyPreset(preset) {
+    this.set({ height: preset.height, fps: preset.fps, bitrate: preset.bitrate, enabled: true });
+    BdApi.UI.showToast(`Préréglage appliqué : ${preset.name}`, { type: "success" });
+  }
+
+  // Saving under an existing name replaces that preset, so settings can be updated in one step.
+  savePreset(rawName) {
+    const name = rawName.trim();
+    const same = (p) => p.name.toLowerCase() === name.toLowerCase();
+    if (!name) return BdApi.UI.showToast("Donne un nom au préréglage", { type: "error" });
+    if (name.length > PRESET_NAME_LIMIT) return BdApi.UI.showToast(`Nom trop long (${PRESET_NAME_LIMIT} caractères max)`, { type: "error" });
+    if (BUILT_IN_PRESETS.some(same)) return BdApi.UI.showToast("Ce nom est déjà pris par un préréglage intégré", { type: "error" });
+    const list = this.presets;
+    const others = list.filter((p) => !same(p));
+    if (others.length === list.length && list.length >= PRESET_LIMIT) return BdApi.UI.showToast(`Limite de ${PRESET_LIMIT} préréglages atteinte`, { type: "error" });
+    const { height, fps, bitrate } = this.settings;
+    BdApi.Data.save(PLUGIN, "presets", [...others, { name, height, fps, bitrate }]);
+    BdApi.UI.showToast(`Préréglage enregistré : ${name}`, { type: "success" });
+  }
+
+  deletePreset(name) {
+    BdApi.Data.save(PLUGIN, "presets", this.presets.filter((p) => p.name !== name));
+    BdApi.UI.showToast(`Préréglage supprimé : ${name}`, { type: "info" });
   }
 
   start() {
@@ -156,6 +194,18 @@ module.exports = class CameraQuality {
 
   // Plain DOM prompt: no React/BetterDiscord components, so it cannot crash Discord's UI.
   promptNumber(title, current, min, onValue) {
+    const parse = (raw) => {
+      const n = Math.round(Number(raw));
+      return Number.isFinite(n) && n >= min ? n : null;
+    };
+    this.prompt(title, current, (input) => { input.type = "number"; input.min = String(min); }, parse, onValue);
+  }
+
+  promptText(title, current, onValue) {
+    this.prompt(title, current, (input) => { input.type = "text"; input.maxLength = PRESET_NAME_LIMIT; }, (raw) => raw, onValue);
+  }
+
+  prompt(title, current, setUp, parse, onValue) {
     try {
       document.getElementById("camera-quality-prompt")?.remove();
       const overlay = document.createElement("div");
@@ -167,8 +217,7 @@ module.exports = class CameraQuality {
       label.textContent = title;
       label.style.cssText = "font-size:16px;font-weight:600;margin-bottom:12px";
       const input = document.createElement("input");
-      input.type = "number";
-      input.min = String(min);
+      setUp(input);
       input.value = String(current);
       input.style.cssText = "width:100%;box-sizing:border-box;padding:10px;font-size:16px;border-radius:4px;border:1px solid var(--border-subtle,#3f4147);background:var(--input-background,#1e1f22);color:var(--text-normal,#dbdee1);outline:none";
       const row = document.createElement("div");
@@ -183,9 +232,9 @@ module.exports = class CameraQuality {
       const ok = mkButton("OK", true);
       const close = () => overlay.remove();
       const confirm = () => {
-        const n = Math.round(Number(input.value));
+        const value = parse(input.value);
         close();
-        if (Number.isFinite(n) && n >= min) onValue(n);
+        if (value != null) onValue(value);
         else BdApi.UI.showToast("Valeur invalide", { type: "error" });
       };
       cancel.onclick = close;
@@ -247,6 +296,27 @@ module.exports = class CameraQuality {
       )
     ];
 
+    const summary = (p) => [p.height > 0 ? `${p.height}p` : "Auto", p.fps > 0 ? `${p.fps} FPS` : "Auto", p.bitrate > 0 ? `${p.bitrate} kbps` : "Auto"].join(" · ");
+    const isActive = (p) => s.enabled && p.height === s.height && p.fps === s.fps && p.bitrate === s.bitrate;
+    const presetItem = (p, prefix) => item(`camera-quality-${prefix}-${p.name}`, mark(isActive(p)) + p.name, () => this.applyPreset(p), { subtext: summary(p) });
+    const saved = this.presets;
+    const active = [...BUILT_IN_PRESETS, ...saved].find(isActive);
+    const presetGroups = [
+      h(Group, { key: "camera-quality-builtin" }, ...BUILT_IN_PRESETS.map((p) => presetItem(p, "builtin")))
+    ];
+    if (saved.length > 0) {
+      presetGroups.push(h(Group, { key: "camera-quality-saved" }, ...saved.map((p) => presetItem(p, "saved"))));
+    }
+    const presetActions = [
+      item("camera-quality-preset-save", "Enregistrer les réglages actuels…", () => this.promptText("Nom du préréglage", active && saved.includes(active) ? active.name : "", (name) => this.savePreset(name)))
+    ];
+    if (saved.length > 0) {
+      presetActions.push(h(Item, { key: "camera-quality-preset-delete", id: "camera-quality-preset-delete", label: "Supprimer un préréglage" },
+        h(Group, { key: "camera-quality-delete-group" },
+          ...saved.map((p) => item(`camera-quality-delete-${p.name}`, p.name, () => this.deletePreset(p.name))))));
+    }
+    presetGroups.push(h(Group, { key: "camera-quality-preset-actions" }, ...presetActions));
+
     return h(Group, { key: "camera-quality-group" },
       h(Item, {
         key: "camera-quality",
@@ -256,6 +326,9 @@ module.exports = class CameraQuality {
       },
         h(Group, { key: "camera-quality-toggle-group" },
           item("camera-quality-enabled", (s.enabled ? "✅ " : "⬜ ") + "Activer la qualité perso", () => this.set({ enabled: !this.settings.enabled }))
+        ),
+        h(Group, { key: "camera-quality-presets-group" },
+          h(Item, { key: "camera-quality-presets", id: "camera-quality-presets", label: active ? `Préréglages (${active.name})` : "Préréglages" }, ...presetGroups)
         ),
         h(Group, { key: "camera-quality-settings-group" },
           h(Item, { key: "camera-quality-res", id: "camera-quality-res", label: `Résolution (${resLabel})` },
