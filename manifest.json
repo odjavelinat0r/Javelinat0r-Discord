@@ -1,6 +1,6 @@
 {
-    "version":  11,
-    "published":  "2026-11-07T06:34:57.3736551Z",
+    "version":  12,
+    "published":  "2026-11-07T06:39:11.5232443Z",
     "notes":  "",
     "plugins":  [
                     {
@@ -24,6 +24,11 @@
                         "size":  11497
                     },
                     {
+                        "name":  "Bonk.plugin.js",
+                        "sha256":  "c8c06dc632e80524dfb1974ab4eae21e2f4e3e4591c0855f946688e1f4c6a2a4",
+                        "size":  4077
+                    },
+                    {
                         "name":  "BypassBlockedOrIgnored.plugin.js",
                         "sha256":  "557bf30347a27984db6b152c0b66ef10ec8396c1c685c818812e382bcdca38bf",
                         "size":  5648
@@ -42,6 +47,11 @@
                         "name":  "Javelinat0reo.plugin.js",
                         "sha256":  "300920bcff601f5ff666e3f8ac37990a9910f135fb15b69a0a8444ce28dd25d5",
                         "size":  5811
+                    },
+                    {
+                        "name":  "LeCanard.plugin.js",
+                        "sha256":  "cb65c8c31ec3ce0a1f6645cb5d22170458fd2c33da2aae9aef17ea57441d0668",
+                        "size":  6808
                     },
                     {
                         "name":  "MentionFix.plugin.js",
@@ -82,6 +92,11 @@
                         "name":  "YABDP4Nitro.plugin.js",
                         "sha256":  "73b529073c6d9b01328a022c4306eacaadc497d8f93090ce21501d95e06d1ee8",
                         "size":  320795
+                    },
+                    {
+                        "name":  "Yapometre.plugin.js",
+                        "sha256":  "6f1b29566f14605abe7c1ac992d3490adc324f8f21d46c5bd101b3e379fdee3a",
+                        "size":  7431
                     }
                 ],
     "themes":  [
