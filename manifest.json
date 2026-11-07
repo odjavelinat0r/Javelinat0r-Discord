@@ -1,6 +1,6 @@
 {
-    "version":  12,
-    "published":  "2026-11-07T06:39:11.5232443Z",
+    "version":  13,
+    "published":  "2026-11-07T07:13:55.7503073Z",
     "notes":  "",
     "plugins":  [
                     {
@@ -50,8 +50,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "cb65c8c31ec3ce0a1f6645cb5d22170458fd2c33da2aae9aef17ea57441d0668",
-                        "size":  6808
+                        "sha256":  "9a62cd0deb3d95101ed91cce7d397f0d8dd438f4260e40c800888812c688b047",
+                        "size":  30386
                     },
                     {
                         "name":  "MentionFix.plugin.js",
