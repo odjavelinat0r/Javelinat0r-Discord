@@ -14,10 +14,11 @@
 # Root is the folder holding the app-* versions, so it works for Stable, PTB and Canary.
 # Check changes nothing. Apply and Restore need Discord fully closed.
 param(
-    [ValidateSet('Auto', 'Check', 'Apply', 'Restore')][string]$Mode = 'Auto',
+    [ValidateSet('Auto', 'Check', 'Apply', 'Restore', 'Scan')][string]$Mode = 'Auto',
     [int]$Bitrate = 510000,
     [string]$Root = (Join-Path $env:LOCALAPPDATA 'Discord'),
-    [switch]$Plugins
+    [switch]$Plugins,
+    [switch]$RemoveMods
 )
 $ErrorActionPreference = 'Stop'
 
@@ -171,7 +172,7 @@ $Leaf = Split-Path $Root -Leaf
 $Sub = if ($Leaf -ieq 'Discord') { $App.Name } else { Join-Path $Leaf $App.Name }
 $Module = Get-ChildItem (Join-Path $App.FullName 'modules') -Directory -Filter 'discord_voice*' -ErrorAction SilentlyContinue | Sort-Object { [int]($_.Name -replace '\D', '') } | Select-Object -Last 1
 $NoVoiceMessage = 'Stereo: not installed yet, because Discord has not downloaded its voice module. Open Discord and join a voice channel once. Stereo then finishes at your next login, or run this again.'
-if (-not $Module -and $Mode -ne 'Auto') { throw 'Discord has not downloaded its voice module yet. Start Discord, join a voice channel once, then run this again.' }
+if (-not $Module -and $Mode -notin 'Auto', 'Scan') { throw 'Discord has not downloaded its voice module yet. Start Discord, join a voice channel once, then run this again.' }
 $Dir = if ($Module) { Join-Path $Module.FullName 'discord_voice' } else { Join-Path $App.FullName 'modules\discord_voice' }
 $Node = Join-Path $Dir 'discord_voice.node'
 $Index = Join-Path $Dir 'index.js'
@@ -278,9 +279,120 @@ function Install-Plugins {
     'Plugins: installed and turned on.'
 }
 
+# A real Discord app.asar is several MB. Mods swap it for a tiny loader and keep the
+# original under another name, so size and that saved copy tell us what happened.
+$RealAsarSize = 1MB
+$SavedNames = '_app.asar', 'app.orig.asar'
+$BackupNames = 'app.asar.backup', 'app.asar.bak', 'app.asar.orig'
+$KnownMods = [ordered]@{ equicord = 'Equicord'; vencord = 'Vencord'; replugged = 'Replugged'; moonlight = 'moonlight'; openasar = 'OpenAsar'; shelter = 'shelter'; powercord = 'Powercord'; goosemod = 'GooseMod'; lightcord = 'Lightcord' }
+
+function Get-ModName([string[]]$Paths) {
+    foreach ($path in $Paths) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $files = if (Test-Path -LiteralPath $path -PathType Container) { @(Get-ChildItem -LiteralPath $path -File -Recurse -Filter '*.js*' -ErrorAction SilentlyContinue | Select-Object -First 20) } else { @(Get-Item -LiteralPath $path) }
+        foreach ($file in $files) {
+            if ($file.Length -gt 2MB) { continue }
+            $text = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($file.FullName)).ToLowerInvariant()
+            foreach ($key in $KnownMods.Keys) { if ($text.Contains($key)) { return $KnownMods[$key] } }
+        }
+    }
+    return 'Unknown mod'
+}
+
+function Get-FileSize([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($item -and -not $item.PSIsContainer) { return $item.Length }
+    return 0
+}
+
+function Get-CoreFiles {
+    @(Get-ChildItem (Join-Path $App.FullName 'modules') -Directory -Filter 'discord_desktop_core*' -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'discord_desktop_core\index.js' } |
+        Where-Object { Test-Path -LiteralPath $_ })
+}
+
+function Test-OursAppFolder {
+    $index = Join-Path $Resources 'app\index.js'
+    return (Test-Path -LiteralPath $index) -and ([IO.File]::ReadAllText($index) -match 'betterdiscord')
+}
+
+function Find-Mods {
+    $names = New-Object System.Collections.Generic.List[string]
+    $asar = Join-Path $Resources 'app.asar'
+    $folder = Join-Path $Resources 'app'
+    $renamed = Join-Path $Resources 'betterdiscord.app.asar'
+    $saved = @($SavedNames | ForEach-Object { Join-Path $Resources $_ } | Where-Object { Test-Path -LiteralPath $_ })
+    $ours = Test-OursAppFolder
+
+    $tampered = $saved.Count -gt 0
+    if ((Test-Path -LiteralPath $folder) -and -not $ours) { $tampered = $true }
+    if (Test-Path -LiteralPath $asar -PathType Container) { $tampered = $true }
+    if ((Test-Path -LiteralPath $asar -PathType Leaf) -and (Get-FileSize $asar) -lt $RealAsarSize) { $tampered = $true }
+    if ((Test-Path -LiteralPath $renamed) -and (Get-FileSize $renamed) -lt $RealAsarSize) { $tampered = $true }
+    if ($tampered) {
+        $looks = @($asar, $renamed)
+        if (-not $ours) { $looks += $folder }
+        $names.Add((Get-ModName $looks))
+    }
+
+    # Stock Discord has exactly one line here. BetterDiscord's own installer also edits it.
+    foreach ($core in Get-CoreFiles) {
+        $text = [IO.File]::ReadAllText($core)
+        if ($text -match 'betterdiscord') { continue }
+        if ($text -notmatch '^\s*module\.exports\s*=\s*require\(\s*[''"]\./core\.asar[''"]\s*\)\s*;?\s*$') { $names.Add((Get-ModName @($core))) }
+    }
+    return @($names | Sort-Object -Unique)
+}
+
+function Remove-Mods {
+    $asar = Join-Path $Resources 'app.asar'
+    $folder = Join-Path $Resources 'app'
+    $renamed = Join-Path $Resources 'betterdiscord.app.asar'
+    $original = $SavedNames + $BackupNames | ForEach-Object { Join-Path $Resources $_ } | Where-Object { (Get-FileSize $_) -ge $RealAsarSize } | Select-Object -First 1
+    if (-not $original -and (Get-FileSize $renamed) -ge $RealAsarSize) { $original = $renamed }
+    if (-not $original -and (Get-FileSize $asar) -lt $RealAsarSize) {
+        throw "The original Discord file is missing, so the mod can't be removed safely. Reinstall this Discord version, then run this again."
+    }
+    if ($original) {
+        if (Test-Path -LiteralPath $asar) { Remove-Item -LiteralPath $asar -Recurse -Force -Confirm:$false }
+        Remove-Item -LiteralPath $folder -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+        Move-Item -LiteralPath $original $asar
+        foreach ($stale in @($renamed) + @($SavedNames | ForEach-Object { Join-Path $Resources $_ })) {
+            if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force -Confirm:$false }
+        }
+    } elseif ((Test-Path -LiteralPath $folder) -and -not (Test-OursAppFolder)) {
+        Remove-Item -LiteralPath $folder -Recurse -Force -Confirm:$false
+    }
+    foreach ($core in Get-CoreFiles) {
+        $text = [IO.File]::ReadAllText($core)
+        if ($text -notmatch 'betterdiscord' -and $text -notmatch '^\s*module\.exports\s*=\s*require\(\s*[''"]\./core\.asar[''"]\s*\)\s*;?\s*$') {
+            [IO.File]::WriteAllText($core, "module.exports = require('./core.asar');`n", (New-Object Text.UTF8Encoding($false)))
+        }
+    }
+}
+
+if ($Mode -eq 'Scan') {
+    Find-Mods | ForEach-Object { "MOD|$_" }
+    return
+}
+
 $NeedBd = $false
 $NeedPlugins = $false
 if ($Mode -eq 'Auto') {
+    # Never removed without the person agreeing in the app, so the login check only skips.
+    $Mods = @(Find-Mods)
+    if ($Mods.Count -gt 0) {
+        if (-not $RemoveMods) {
+            "Other mod found: $($Mods -join ', '). This version was skipped."
+            return
+        }
+        Stop-Discord
+        try { Remove-Mods } catch { Start-Discord; throw }
+        $left = @(Find-Mods)
+        if ($left.Count -gt 0) { Start-Discord; throw "Could not fully remove: $($left -join ', '). Reinstall this Discord version, then run this again." }
+        "Other mods removed: $($Mods -join ', ')."
+    }
+
     $NeedBd = (Test-Path -LiteralPath $BdAsar) -and -not (Test-BetterDiscord)
     $NeedPlugins = Test-PluginWork
     "BetterDiscord: $(if ($NeedBd) { 'missing' } else { 'ok' })"

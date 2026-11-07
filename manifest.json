@@ -1,6 +1,6 @@
 {
-    "version":  3,
-    "published":  "2026-11-07T02:27:20.8868101Z",
+    "version":  4,
+    "published":  "2026-11-07T03:57:27.3654264Z",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -86,8 +86,13 @@
     "scripts":  [
                     {
                         "name":  "Discord-TrueStereo.ps1",
-                        "sha256":  "e35f0c30b6c0e8010fe0c4a711c97d35d7db7874f4d1c388e0beccf96c04ff0b",
-                        "size":  19805
+                        "sha256":  "9cabfac7d8ff30e063f2192039af0c7bf0e3613a3b0e0b4e0c4f0f7c664f8a5b",
+                        "size":  25561
                     }
-                ]
+                ],
+    "app":  {
+                "version":  2,
+                "sha256":  "194d17b54bcd0fb0b57e1e1da86d1b6101cd841935bc072e72e6160ae8bf6bfe",
+                "size":  2394112
+            }
 }
