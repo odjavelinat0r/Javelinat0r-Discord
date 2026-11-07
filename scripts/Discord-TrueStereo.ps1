@@ -22,6 +22,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# The quality chosen in the app. It has to apply after every Discord update too.
+if (-not $PSBoundParameters.ContainsKey('Bitrate')) {
+    $saved = Join-Path $env:LOCALAPPDATA 'Javelinat0r\voice-bitrate.txt'
+    if (Test-Path -LiteralPath $saved) {
+        $value = 0
+        if ([int]::TryParse((Get-Content -LiteralPath $saved -Raw).Trim(), [ref]$value)) { $Bitrate = [Math]::Max(8000, [Math]::Min(510000, $value)) }
+    }
+}
+
 Add-Type -TypeDefinition @'
 public static class StereoSig {
     // Returns the match position, -1 for no match, -2 for more than one match.
@@ -208,8 +217,10 @@ $Resources = Join-Path $App.FullName 'resources'
 $BdHome = Join-Path $env:APPDATA 'BetterDiscord'
 $BdAsar = Join-Path $Kit 'betterdiscord.asar'
 $BundledPlugins = Join-Path $Kit 'plugins'
+$BundledThemes = Join-Path $Kit 'themes'
 $Channel = switch ($Proc) { 'DiscordPTB' { 'ptb' } 'DiscordCanary' { 'canary' } 'DiscordDevelopment' { 'development' } default { 'stable' } }
 $EnabledFile = Join-Path $BdHome "data\$Channel\plugins.json"
+$ThemeState = Join-Path $BdHome "data\$Channel\themes.json"
 
 function Test-BetterDiscord {
     $entries = @(Join-Path $Resources 'app\index.js')
@@ -277,6 +288,40 @@ function Install-Plugins {
     foreach ($name in Get-PluginNames) { if (-not $state.Contains($name)) { $state[$name] = ($startOff -notcontains $name) } }
     [IO.File]::WriteAllText($EnabledFile, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
     'Plugins: installed and turned on.'
+}
+
+function Get-ThemeNames {
+    Get-ChildItem -LiteralPath $BundledThemes -Filter '*.theme.css' -ErrorAction SilentlyContinue | ForEach-Object {
+        $hit = Select-String -LiteralPath $_.FullName -Pattern '@name[ \t]+(.+?)\s*$' -List
+        if ($hit) { $hit.Matches[0].Groups[1].Value }
+    }
+}
+
+function Test-ThemeWork {
+    if (-not $Plugins -or -not (Test-Path -LiteralPath $BundledThemes)) { return $false }
+    foreach ($file in Get-ChildItem -LiteralPath $BundledThemes -File) {
+        if (-not (Test-Path -LiteralPath (Join-Path $BdHome "themes\$($file.Name)"))) { return $true }
+    }
+    $names = @(Get-ThemeNames)
+    if ($names.Count -eq 0) { return $false }
+    if (-not (Test-Path -LiteralPath $ThemeState)) { return $true }
+    $state = Get-Content -LiteralPath $ThemeState -Raw | ConvertFrom-Json
+    foreach ($name in $names) { if ($null -eq $state.$name) { return $true } }
+    return $false
+}
+
+function Install-Themes {
+    New-Item -ItemType Directory -Force (Join-Path $BdHome 'themes'), (Split-Path $ThemeState) | Out-Null
+    foreach ($file in Get-ChildItem -LiteralPath $BundledThemes -File) {
+        Copy-Item -LiteralPath $file.FullName (Join-Path $BdHome "themes\$($file.Name)") -Force
+    }
+    $state = [ordered]@{}
+    if (Test-Path -LiteralPath $ThemeState) {
+        (Get-Content -LiteralPath $ThemeState -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $state[$_.Name] = $_.Value }
+    }
+    foreach ($name in Get-ThemeNames) { if (-not $state.Contains($name)) { $state[$name] = $true } }
+    [IO.File]::WriteAllText($ThemeState, ($state | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+    'Themes: installed and turned on.'
 }
 
 # A real Discord app.asar is several MB. Mods swap it for a tiny loader and keep the
@@ -378,6 +423,7 @@ if ($Mode -eq 'Scan') {
 
 $NeedBd = $false
 $NeedPlugins = $false
+$NeedThemes = $false
 if ($Mode -eq 'Auto') {
     # Never removed without the person agreeing in the app, so the login check only skips.
     $Mods = @(Find-Mods)
@@ -393,16 +439,20 @@ if ($Mode -eq 'Auto') {
         "Other mods removed: $($Mods -join ', ')."
     }
 
-    $NeedBd = (Test-Path -LiteralPath $BdAsar) -and -not (Test-BetterDiscord)
+    # BetterDiscord can be wired in with its main file gone, which leaves Discord plain.
+    $AsarGone = -not (Test-Path -LiteralPath (Join-Path $BdHome 'data\betterdiscord.asar'))
+    $NeedBd = (Test-Path -LiteralPath $BdAsar) -and (-not (Test-BetterDiscord) -or $AsarGone)
     $NeedPlugins = Test-PluginWork
+    $NeedThemes = Test-ThemeWork
     "BetterDiscord: $(if ($NeedBd) { 'missing' } else { 'ok' })"
     "Plugins: $(if ($NeedPlugins) { 'missing' } else { 'ok' })"
 
     # These come first, so a stereo problem can never stop them from installing.
-    if ($NeedBd -or $NeedPlugins) {
+    if ($NeedBd -or $NeedPlugins -or $NeedThemes) {
         Stop-Discord
         if ($NeedBd) { Install-BetterDiscord }
         if ($NeedPlugins) { Install-Plugins }
+        if ($NeedThemes) { Install-Themes }
     }
 
     if (-not ((Test-Path -LiteralPath $Node) -and (Test-Path -LiteralPath $Index))) {
@@ -451,8 +501,9 @@ if ($Blocked) {
     Start-Discord
     throw 'Stereo was not installed, because this Discord version does not match the patch. BetterDiscord and the plugins are not affected.'
 }
-if ($Mode -eq 'Auto' -and $Plan.Count -eq 0 -and $JsDone) {
-    if ($NeedBd -or $NeedPlugins) { 'Stereo: already installed.' } else { 'Everything is already installed. Nothing to do.' }
+$RateChange = $JsDone -and $Text -notmatch "const BITRATE = $Bitrate;"
+if ($Mode -eq 'Auto' -and $Plan.Count -eq 0 -and $JsDone -and -not $RateChange) {
+    if ($NeedBd -or $NeedPlugins -or $NeedThemes) { 'Stereo: already installed.' } else { 'Everything is already installed. Nothing to do.' }
     Start-Discord
     return
 }
@@ -482,6 +533,10 @@ if (-not $JsDone) {
     $new = $Text.Replace($AnchorBind, $block + $AnchorBind).Replace($AnchorConn, $PatchedConn).Replace($AnchorExports, "$PatchedExports`n$AnchorExports")
     [IO.File]::WriteAllText($Index, $new, (New-Object Text.UTF8Encoding($false)))
     'JS hook added.'
+}
+if ($RateChange) {
+    [IO.File]::WriteAllText($Index, ($Text -replace 'const BITRATE = \d+;', "const BITRATE = $Bitrate;"), (New-Object Text.UTF8Encoding($false)))
+    "Voice quality set to $([int]($Bitrate / 1000)) kbps."
 }
 if ($Mode -eq 'Auto') {
     New-Item -ItemType Directory -Force $Stored | Out-Null
