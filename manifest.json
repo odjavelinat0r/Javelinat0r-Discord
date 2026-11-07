@@ -1,6 +1,6 @@
 {
-    "version":  5,
-    "published":  "2026-11-07T04:15:15.8821253Z",
+    "version":  6,
+    "published":  "2026-11-07T04:56:36.8139532Z",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -89,10 +89,5 @@
                         "sha256":  "9cabfac7d8ff30e063f2192039af0c7bf0e3613a3b0e0b4e0c4f0f7c664f8a5b",
                         "size":  25561
                     }
-                ],
-    "app":  {
-                "version":  3,
-                "sha256":  "6c9c7176b8e950d581a6eb8c8b1ccb6122155a39871de0d15ad43de197ba65d9",
-                "size":  2414592
-            }
+                ]
 }
