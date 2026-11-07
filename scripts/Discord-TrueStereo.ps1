@@ -73,6 +73,8 @@ $Marker = 'DISCORD-STEREO-PATCH'
 $AnchorBind = 'function bindConnectionInstance(instance) {'
 $AnchorConn = '        setTransportOptions: (options) => instance.setTransportOptions(options),'
 $PatchedConn = '        setTransportOptions: (options) => instance.setTransportOptions(discordStereo.connectionOptions(instance, options)), /* DISCORD-STEREO-PATCH */'
+$AnchorStats = '        getStats: (callback) => instance.getStats(callback),'
+$PatchedStats = '        getStats: (callback) => instance.getStats(discordStereo.watchStats(instance, callback)), /* DISCORD-STEREO-PATCH */'
 $AnchorExports = 'module.exports = VoiceEngine;'
 $PatchedExports = 'discordStereo.installEngineHooks(VoiceEngine); /* DISCORD-STEREO-PATCH */'
 $JsBlock = @'
@@ -85,6 +87,8 @@ const discordStereo = (() => {
         'noiseSuppression', 'noiseCancellation', 'noiseCancellationDuringProcessing', 'automaticGainControl',
     ];
     const connections = new WeakMap();
+    const sentBefore = new WeakMap();
+    let shapeShown = false;
     let lastMessage = null;
     function say(message) {
         if (message === lastMessage) return;
@@ -122,6 +126,43 @@ const discordStereo = (() => {
         } catch (e) { say(`connectionOptions error: ${e && e.message}`); }
         return options;
     }
+    function audioBytes(value, outbound, depth) {
+        if (value == null || typeof value !== 'object' || depth > 6) return 0;
+        const sent = value.bytesSent ?? value.bytes_sent;
+        if (outbound && typeof sent === 'number' && value.type !== 'video' && value.kind !== 'video') return sent;
+        let total = 0;
+        for (const key of Object.keys(value)) {
+            if (key === 'video' || key === 'inbound') continue;
+            total += audioBytes(value[key], outbound || key === 'outbound', depth + 1);
+        }
+        return total;
+    }
+    function measure(instance, stats) {
+        if (connections.get(instance) !== true) return;
+        const bytes = audioBytes(stats, false, 0);
+        if (!shapeShown) {
+            shapeShown = true;
+            say(`stats shape: ${Object.keys(stats).map((k) => `${k}{${stats[k] && typeof stats[k] === 'object' ? Object.keys(stats[k]).slice(0, 8) : ''}}`).join(' ')}`);
+        }
+        if (!(bytes > 0)) return;
+        const now = Date.now();
+        const before = sentBefore.get(instance);
+        if (!before || bytes < before.bytes) { sentBefore.set(instance, { bytes, at: now }); return; }
+        if (now - before.at < 5000) return;
+        const kbps = Math.round((bytes - before.bytes) * 8 / (now - before.at));
+        sentBefore.set(instance, { bytes, at: now });
+        if (kbps > 0) say(`measured send: ${kbps} kbps`);
+    }
+    function watchStats(instance, callback) {
+        return function (...args) {
+            try {
+                let stats = args.find((a) => a != null && (typeof a === 'object' || (typeof a === 'string' && a[0] === '{')));
+                if (typeof stats === 'string') stats = JSON.parse(stats);
+                if (stats) measure(instance, stats);
+            } catch (e) {}
+            return callback.apply(this, args);
+        };
+    }
     function wrapEngine(engine, name, transform) {
         const original = engine[name];
         if (typeof original !== 'function') return;
@@ -137,7 +178,7 @@ const discordStereo = (() => {
         wrapEngine(engine, 'setVoiceChannelCountCap', (args) => { if (typeof args[0] === 'number' && args[0] > 0 && args[0] < CHANNELS) args[0] = 0; });
         say(`loaded: channels=${CHANNELS} bitrate=${BITRATE}`);
     }
-    return { connectionOptions, installEngineHooks };
+    return { connectionOptions, installEngineHooks, watchStats };
 })();
 /* DISCORD-STEREO-PATCH END */
 
@@ -502,7 +543,8 @@ if ($Blocked) {
     throw 'Stereo was not installed, because this Discord version does not match the patch. BetterDiscord and the plugins are not affected.'
 }
 $RateChange = $JsDone -and $Text -notmatch "const BITRATE = $Bitrate;"
-if ($Mode -eq 'Auto' -and $Plan.Count -eq 0 -and $JsDone -and -not $RateChange) {
+$HookOld = $JsDone -and -not $Text.Contains('measured send')
+if ($Mode -eq 'Auto' -and $Plan.Count -eq 0 -and $JsDone -and -not $RateChange -and -not $HookOld) {
     if ($NeedBd -or $NeedPlugins -or $NeedThemes) { 'Stereo: already installed.' } else { 'Everything is already installed. Nothing to do.' }
     Start-Discord
     return
@@ -528,16 +570,25 @@ if ($Plan.Count -gt 0) {
     }
     "Native: $($Plan.Count) sites patched and verified."
 }
+$Updated = $Text
+$block = ($JsBlock -replace '__BITRATE__', "$Bitrate") -replace "`r`n", "`n"
 if (-not $JsDone) {
-    $block = ($JsBlock -replace '__BITRATE__', "$Bitrate") -replace "`r`n", "`n"
-    $new = $Text.Replace($AnchorBind, $block + $AnchorBind).Replace($AnchorConn, $PatchedConn).Replace($AnchorExports, "$PatchedExports`n$AnchorExports")
-    [IO.File]::WriteAllText($Index, $new, (New-Object Text.UTF8Encoding($false)))
+    $Updated = $Text.Replace($AnchorBind, $block + $AnchorBind).Replace($AnchorConn, $PatchedConn).Replace($AnchorExports, "$PatchedExports`n$AnchorExports").Replace($AnchorStats, $PatchedStats)
     'JS hook added.'
+} elseif ($HookOld) {
+    # An older hook is already in place, so swap it for this one.
+    $endMark = "/* $Marker END */"
+    $start = $Text.IndexOf("/* $Marker BEGIN */")
+    $end = $Text.IndexOf($endMark)
+    if ($start -lt 0 -or $end -lt $start) { throw 'The stereo hook in this Discord looks damaged. Use Repair after reinstalling Discord.' }
+    $Updated = ($Text.Substring(0, $start) + $block.TrimEnd() + $Text.Substring($end + $endMark.Length)).Replace($AnchorStats, $PatchedStats)
+    'JS hook updated.'
 }
 if ($RateChange) {
-    [IO.File]::WriteAllText($Index, ($Text -replace 'const BITRATE = \d+;', "const BITRATE = $Bitrate;"), (New-Object Text.UTF8Encoding($false)))
+    $Updated = $Updated -replace 'const BITRATE = \d+;', "const BITRATE = $Bitrate;"
     "Voice quality set to $([int]($Bitrate / 1000)) kbps."
 }
+if ($Updated -cne $Text) { [IO.File]::WriteAllText($Index, $Updated, (New-Object Text.UTF8Encoding($false))) }
 if ($Mode -eq 'Auto') {
     New-Item -ItemType Directory -Force $Stored | Out-Null
     Copy-Item -LiteralPath $Node $Stored -Force

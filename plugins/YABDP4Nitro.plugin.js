@@ -4866,7 +4866,56 @@ var MODES = [
     patch: { CustomResolution: 0, CustomFPS: 60, ...NO_BITRATE }
   }
 ];
+// Local fix (2026-11-06): some components BetterDiscord or YABDP4Nitro look up in Discord can come
+// back undefined after a Discord update, which crashes the whole app when the shield modal opens.
+// Use them only when they are real React types, otherwise fall back to plain HTML.
+function isReactType(t) {
+  return typeof t === "function" || (t != null && typeof t === "object" && t.$$typeof != null);
+}
+function SafeButton({ onClick, children }) {
+  return /* @__PURE__ */ React5.createElement("button", {
+    type: "button",
+    onClick,
+    style: { padding: "8px 14px", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", color: "#fff", background: "var(--brand-500, #5865f2)" }
+  }, children);
+}
+function SafeNumberInput({ id, value, min, onChange }) {
+  return /* @__PURE__ */ React5.createElement("input", {
+    id,
+    type: "number",
+    min,
+    value: value ?? "",
+    onChange: (e) => onChange(e.target.value === "" ? "" : Number(e.target.value)),
+    style: { width: "100%", boxSizing: "border-box", padding: "8px", fontSize: "14px", borderRadius: "4px", border: "1px solid var(--border-subtle, #3f4147)", background: "var(--input-background, #1e1f22)", color: "var(--text-normal, #dbdee1)" }
+  });
+}
+function SafeModal({ title, notice, actions, children, onClose }) {
+  return /* @__PURE__ */ React5.createElement("div", {
+    style: { width: "600px", maxWidth: "90vw", maxHeight: "85vh", overflowY: "auto", pointerEvents: "auto", background: "var(--background-base-low, #2b2d31)", color: "var(--text-normal, #dbdee1)", borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,.5)", fontFamily: "var(--font-primary, sans-serif)" }
+  }, /* @__PURE__ */ React5.createElement("div", { style: { padding: "16px", fontSize: "20px", fontWeight: 700 } }, title),
+    notice?.message ? /* @__PURE__ */ React5.createElement("div", { style: { margin: "0 16px 16px", padding: "10px", borderRadius: "4px", background: "rgba(240,178,50,.15)", fontSize: "14px" } }, notice.message) : null,
+    children,
+    /* @__PURE__ */ React5.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: "8px", padding: "16px" } },
+      (actions ?? []).map((a) => /* @__PURE__ */ React5.createElement("button", {
+        key: a.text,
+        type: "button",
+        onClick: a.onClick ?? onClose,
+        style: { padding: "8px 16px", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", color: "#fff", background: a.variant === "secondary" ? "var(--background-mod-strong, #4e5058)" : "var(--brand-500, #5865f2)" }
+      }, a.text))));
+}
+function getModalType() {
+  if (isReactType(GlobalModules.Modal)) return GlobalModules.Modal;
+  try {
+    const mod = BetterDiscord.Webpack.getModule(BetterDiscord.Webpack.Filters.bySource("leadingLayout:", "actions:", ".message"));
+    const found = mod && Object.values(mod).find((v) => typeof v === "function");
+    if (found) return found;
+  } catch {}
+  return SafeModal;
+}
 function ConfigModal({ props, onClose, forceQuality }) {
+  const ModalType = getModalType();
+  const ButtonType = isReactType(Components?.Button) ? Components.Button : SafeButton;
+  const NumberInputType = isReactType(Components?.NumberInput) ? Components.NumberInput : SafeNumberInput;
   const [data, setData] = React5.useState(() => SettingsStore_default.getAll());
   const commit = (key, value) => {
     setData((prev) => ({ ...prev, [key]: value }));
@@ -4900,26 +4949,26 @@ function ConfigModal({ props, onClose, forceQuality }) {
     audioConnection && audioConnection?.updateVideoQuality?.apply?.(audioConnection, []);
     onClose();
   }
-  return /* @__PURE__ */ React5.createElement(GlobalModules.Modal, {
+  return /* @__PURE__ */ React5.createElement(ModalType, {
     actions: [
       { text: "Cancel", onClick: onClose, variant: "secondary" },
       { text: "Apply", onClick: onApply }
     ],
     notice: {
       type: "warning",
-      message: GlobalModules.SimpleMarkdownWrapper.parse("**Bitrate options will instantly apply to your stream upon hitting Apply if you have a stream currently active.**")
+      message: (() => { try { return GlobalModules.SimpleMarkdownWrapper.parse("**Bitrate options will instantly apply to your stream upon hitting Apply if you have a stream currently active.**"); } catch { return "Bitrate options will instantly apply to your stream upon hitting Apply if you have a stream currently active."; } })()
     },
     ...props,
     onClose,
     title: "Stream Settings Configuration"
-  }, /* @__PURE__ */ React5.createElement(ModeRow, null, MODES.map(({ label, patch }) => /* @__PURE__ */ React5.createElement(Components.Button, {
+  }, /* @__PURE__ */ React5.createElement(ModeRow, null, MODES.map(({ label, patch }) => /* @__PURE__ */ React5.createElement(ButtonType, {
     key: label,
     onClick: () => applyMode(patch)
   }, label))), /* @__PURE__ */ React5.createElement(ModalBody, null, fields.map(({ key, label, min }) => /* @__PURE__ */ React5.createElement(FieldWrapper, {
     key
   }, /* @__PURE__ */ React5.createElement(FieldLabel, {
     htmlFor: `yabd-${key}`
-  }, label), /* @__PURE__ */ React5.createElement(Components.NumberInput, {
+  }, label), /* @__PURE__ */ React5.createElement(NumberInputType, {
     id: `yabd-${key}`,
     initalValue: data[key],
     value: data[key],
@@ -4928,11 +4977,12 @@ function ConfigModal({ props, onClose, forceQuality }) {
   })))));
 }
 function openConfigModal(forceQuality) {
-  GlobalModules.ModalModule.openModal((props) => /* @__PURE__ */ React5.createElement(ConfigModal, {
+  const Boundary = isReactType(Components?.ErrorBoundary) ? Components.ErrorBoundary : React5.Fragment;
+  GlobalModules.ModalModule.openModal((props) => /* @__PURE__ */ React5.createElement(Boundary, null, /* @__PURE__ */ React5.createElement(ConfigModal, {
     forceQuality,
     props,
     onClose: props.onClose
-  }));
+  })));
 }
 function CustomFooter() {
   const StreamingModule = wpGet(wpFilter.bySource("GQgGHISKZ5aYqYeYhX9isDUHGw"), { raw: true });

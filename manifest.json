@@ -1,6 +1,6 @@
 {
-    "version":  7,
-    "published":  "2026-11-07T05:16:05.4473686Z",
+    "version":  8,
+    "published":  "2026-11-07T05:48:26.2457261Z",
     "notes":  "",
     "plugins":  [
                     {
@@ -30,8 +30,8 @@
                     },
                     {
                         "name":  "CameraQuality.plugin.js",
-                        "sha256":  "f7229bbc546137415c8261c1241f02cb5c0a73dcb1ab0a0d55bd8e551c6a461d",
-                        "size":  9718
+                        "sha256":  "6f1bf19966ab8d23bd80cc8439293ee6e4074a410759994736921280dcdfcb22",
+                        "size":  14345
                     },
                     {
                         "name":  "Incognito.plugin.js",
@@ -80,8 +80,8 @@
                     },
                     {
                         "name":  "YABDP4Nitro.plugin.js",
-                        "sha256":  "641fbe00c2e615ef1d0072c49ce8f026261952190fc6f1c2a811bf77bcb23556",
-                        "size":  317301
+                        "sha256":  "73b529073c6d9b01328a022c4306eacaadc497d8f93090ce21501d95e06d1ee8",
+                        "size":  320795
                     }
                 ],
     "themes":  [
@@ -90,11 +90,11 @@
     "scripts":  [
                     {
                         "name":  "Discord-TrueStereo.ps1",
-                        "sha256":  "586c3f309a4b13f9fcba1287ad4b69460ae4fcbe558a38113674b232c790d473",
-                        "size":  28426
+                        "sha256":  "b191b4bce648458411716c61fbf388c9f979238388a419f31b610505c21fc41b",
+                        "size":  31193
                     }
                 ],
     "app":  {
-                "version":  5
+                "version":  6
             }
 }

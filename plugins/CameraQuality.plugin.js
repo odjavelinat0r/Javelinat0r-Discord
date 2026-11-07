@@ -83,10 +83,22 @@ module.exports = class CameraQuality {
       return;
     }
     const plugin = this;
-    BdApi.Patcher.after(PLUGIN, Manager.prototype, "getQuality", function (_, __, ret) {
-      if (this.isStreamContext || ret == null) return ret;
+    // YABDP4Nitro pushes its stream bitrates into the camera's qualityOverwrite on every
+    // updateVideoQuality. While CameraQuality is on, compute the camera quality without that
+    // overwrite so the two plugins don't fight over the camera.
+    BdApi.Patcher.instead(PLUGIN, Manager.prototype, "getQuality", (manager, args, original) => {
+      if (!plugin.appliesTo(manager)) return original.apply(manager, args);
+      const saved = manager.qualityOverwrite;
+      manager.qualityOverwrite = undefined;
+      try {
+        return original.apply(manager, args);
+      } finally {
+        manager.qualityOverwrite = saved;
+      }
+    });
+    BdApi.Patcher.after(PLUGIN, Manager.prototype, "getQuality", (manager, __, ret) => {
+      if (ret == null || !plugin.appliesTo(manager)) return ret;
       const s = plugin.settings;
-      if (!s.enabled) return ret;
 
       const out = Object.assign(Object.create(Object.getPrototypeOf(ret)), ret);
       const cap = ret.capture ?? ret.encode;
@@ -99,14 +111,31 @@ module.exports = class CameraQuality {
         out.capture = { ...res };
         out.encode = { ...res };
       }
-      if (s.bitrate > 0) {
-        const bps = Math.round(s.bitrate * 1000);
+      // Auto bitrate: scale with pixels × FPS (~0.1 bit per pixel, Discord's 720p30 ratio)
+      // so a tiny resolution doesn't keep Discord's full camera bitrate and eat the upload.
+      let bps = s.bitrate > 0 ? Math.round(s.bitrate * 1000) : null;
+      if (bps == null && height > 0 && width > 0 && fps > 0) {
+        const scaled = Math.max(30000, Math.round(width * height * fps * 0.1));
+        if (!(ret.bitrateMax > 0) || scaled < ret.bitrateMax) bps = scaled;
+      }
+      if (bps != null) {
         out.bitrateMax = bps;
         out.bitrateTarget = bps;
         out.bitrateMin = Math.min(ret.bitrateMin ?? bps, bps);
       }
       return out;
     });
+  }
+
+  // Only the camera: never a Go Live stream, and never a screen share sent through the call connection
+  // (DM calls share the screen on the "default" connection).
+  appliesTo(manager) {
+    try {
+      if (!this.settings.enabled || manager?.isStreamContext) return false;
+      return !manager?.connection?.hasDesktopSource?.();
+    } catch {
+      return false;
+    }
   }
 
   // Ask every camera (non-stream) connection to recompute its quality right away.
@@ -117,119 +146,150 @@ module.exports = class CameraQuality {
       const list = connections?.values ? Array.from(connections.values()) : Array.from(connections ?? []);
       for (const conn of list) {
         if (conn?.context === "stream" || conn?.videoQualityManager?.isStreamContext) continue;
-        conn?.updateVideoQuality?.();
+        if (!(conn?.videoStreamParameters?.length > 0) || conn?.hasDesktopSource?.()) continue;
+        try { conn.updateVideoQuality?.(); } catch (e) { console.error(`[${PLUGIN}] update failed`, e); }
       }
     } catch (e) {
       console.error(`[${PLUGIN}] reapply failed`, e);
     }
   }
 
+  // Plain DOM prompt: no React/BetterDiscord components, so it cannot crash Discord's UI.
   promptNumber(title, current, min, onValue) {
-    const React = BdApi.React;
-    let value = String(current);
-    BdApi.UI.showConfirmationModal(title, React.createElement("input", {
-      type: "number",
-      min,
-      defaultValue: value,
-      autoFocus: true,
-      onChange: (e) => { value = e.target.value; },
-      style: {
-        width: "100%",
-        boxSizing: "border-box",
-        padding: "10px",
-        fontSize: "16px",
-        borderRadius: "4px",
-        border: "1px solid var(--border-subtle, #3f4147)",
-        background: "var(--input-background, #1e1f22)",
-        color: "var(--text-normal, #dbdee1)"
-      }
-    }), {
-      confirmText: "OK",
-      cancelText: "Annuler",
-      onConfirm: () => {
-        const n = Math.round(Number(value));
+    try {
+      document.getElementById("camera-quality-prompt")?.remove();
+      const overlay = document.createElement("div");
+      overlay.id = "camera-quality-prompt";
+      overlay.style.cssText = "position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6)";
+      const box = document.createElement("div");
+      box.style.cssText = "background:var(--background-base-low,#2b2d31);color:var(--text-normal,#dbdee1);padding:20px;border-radius:8px;min-width:300px;font-family:var(--font-primary,sans-serif);box-shadow:0 8px 24px rgba(0,0,0,.5)";
+      const label = document.createElement("div");
+      label.textContent = title;
+      label.style.cssText = "font-size:16px;font-weight:600;margin-bottom:12px";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = String(min);
+      input.value = String(current);
+      input.style.cssText = "width:100%;box-sizing:border-box;padding:10px;font-size:16px;border-radius:4px;border:1px solid var(--border-subtle,#3f4147);background:var(--input-background,#1e1f22);color:var(--text-normal,#dbdee1);outline:none";
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:16px";
+      const mkButton = (text, primary) => {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.style.cssText = `padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-size:14px;color:#fff;background:${primary ? "var(--brand-500,#5865f2)" : "var(--background-mod-strong,#4e5058)"}`;
+        return b;
+      };
+      const cancel = mkButton("Annuler", false);
+      const ok = mkButton("OK", true);
+      const close = () => overlay.remove();
+      const confirm = () => {
+        const n = Math.round(Number(input.value));
+        close();
         if (Number.isFinite(n) && n >= min) onValue(n);
         else BdApi.UI.showToast("Valeur invalide", { type: "error" });
-      }
-    });
+      };
+      cancel.onclick = close;
+      ok.onclick = confirm;
+      overlay.onclick = (e) => { if (e.target === overlay) close(); };
+      input.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") confirm();
+        else if (e.key === "Escape") close();
+      };
+      row.append(cancel, ok);
+      box.append(label, input, row);
+      overlay.append(box);
+      document.body.append(overlay);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    } catch (e) {
+      console.error(`[${PLUGIN}] prompt failed`, e);
+    }
   }
 
-  buildSection() {
+  // Discord's menu items are marker components with minified names that change every build.
+  // Take the real Item and Group types from the camera menu Discord just rendered.
+  findMenuTypes(menu) {
+    const elements = [];
+    const walk = (node, depth = 0) => {
+      if (depth > 6 || node == null || typeof node !== "object") return;
+      if (Array.isArray(node)) return node.forEach((n) => walk(n, depth + 1));
+      if (node.$$typeof && node.props) {
+        elements.push(node);
+        walk(node.props.children, depth + 1);
+      }
+    };
+    walk(menu.children);
+    const isFn = (t) => typeof t === "function";
+    // A plain item: clickable, and not a radio/checkbox/control/custom-render item, whose required props
+    // (checked, control, render...) our items don't pass.
+    const isPlainItem = (p) => p.id != null && p.label != null && typeof p.action === "function" &&
+      !("checked" in p) && !("group" in p) && !("control" in p) && !("render" in p) && !("children" in p && p.children != null);
+    const Item = elements.find((e) => isFn(e.type) && isPlainItem(e.props))?.type;
+    const Group = elements.find((e) => isFn(e.type) && e.type !== Item && e.props.id == null && e.props.label == null && e.props.children != null)?.type;
+    return isFn(Item) && isFn(Group) ? { Item, Group } : null;
+  }
+
+  buildSection({ Item, Group }) {
+    const h = BdApi.React.createElement;
     const s = this.settings;
-    const radio = (group, id, label, checked, action) => ({ type: "radio", group, id, label, checked, action });
     const resLabel = s.height > 0 ? `${s.height}p` : "Auto";
     const fpsLabel = s.fps > 0 ? `${s.fps} FPS` : "Auto";
     const brLabel = s.bitrate > 0 ? `${s.bitrate} kbps` : "Auto";
+    const mark = (on) => (on ? "● " : "○ ");
+    const item = (id, label, action, extra = {}) => h(Item, { key: id, id, label, action, ...extra });
+    const choiceList = (prefix, values, fmt, current, isAuto, setValue, autoValue, prompt) => [
+      h(Group, { key: `${prefix}-values` },
+        ...values.map((v) => item(`${prefix}-${v}`, mark(current === v) + fmt(v), () => this.set({ ...setValue(v), enabled: true }))),
+        item(`${prefix}-auto`, mark(isAuto) + "Auto (Discord)", () => this.set(autoValue))
+      ),
+      h(Group, { key: `${prefix}-custom-group` },
+        item(`${prefix}-custom`, "Personnalisé…", prompt)
+      )
+    ];
 
-    return {
-      type: "submenu",
-      id: "camera-quality",
-      label: "Qualité caméra",
-      subtext: s.enabled ? `${resLabel} · ${fpsLabel} · ${brLabel}` : "Désactivée",
-      items: [
-        {
-          type: "toggle",
-          id: "camera-quality-enabled",
-          label: "Activer la qualité perso",
-          checked: s.enabled,
-          action: () => this.set({ enabled: !this.settings.enabled })
-        },
-        { type: "separator" },
-        {
-          type: "submenu",
-          id: "camera-quality-res",
-          label: `Résolution (${resLabel})`,
-          items: [
-            ...HEIGHT_CHOICES.map((h) => radio("camera-quality-res", `camera-quality-res-${h}`, `${h}p`, s.height === h, () => this.set({ height: h, enabled: true }))),
-            radio("camera-quality-res", "camera-quality-res-auto", "Auto (Discord)", !(s.height > 0), () => this.set({ height: 0 })),
-            { type: "separator" },
-            {
-              id: "camera-quality-res-custom",
-              label: "Personnalisé…",
-              action: () => this.promptNumber("Résolution caméra (en p)", s.height > 0 ? s.height : 360, 1, (n) => this.set({ height: n, enabled: true }))
-            }
-          ]
-        },
-        {
-          type: "submenu",
-          id: "camera-quality-fps",
-          label: `FPS (${fpsLabel})`,
-          items: [
-            ...FPS_CHOICES.map((f) => radio("camera-quality-fps", `camera-quality-fps-${f}`, `${f} FPS`, s.fps === f, () => this.set({ fps: f, enabled: true }))),
-            radio("camera-quality-fps", "camera-quality-fps-auto", "Auto (Discord)", !(s.fps > 0), () => this.set({ fps: 0 })),
-            { type: "separator" },
-            {
-              id: "camera-quality-fps-custom",
-              label: "Personnalisé…",
-              action: () => this.promptNumber("FPS caméra", s.fps > 0 ? s.fps : 15, 1, (n) => this.set({ fps: n, enabled: true }))
-            }
-          ]
-        },
-        {
-          type: "submenu",
-          id: "camera-quality-bitrate",
-          label: `Débit (${brLabel})`,
-          items: [
-            ...BITRATE_CHOICES.map((b) => radio("camera-quality-bitrate", `camera-quality-bitrate-${b}`, `${b} kbps`, s.bitrate === b, () => this.set({ bitrate: b, enabled: true }))),
-            radio("camera-quality-bitrate", "camera-quality-bitrate-auto", "Auto (Discord)", !(s.bitrate > 0), () => this.set({ bitrate: -1 })),
-            { type: "separator" },
-            {
-              id: "camera-quality-bitrate-custom",
-              label: "Personnalisé…",
-              action: () => this.promptNumber("Débit caméra (en kbps)", s.bitrate > 0 ? s.bitrate : 300, 1, (n) => this.set({ bitrate: n, enabled: true }))
-            }
-          ]
-        }
-      ]
-    };
+    return h(Group, { key: "camera-quality-group" },
+      h(Item, {
+        key: "camera-quality",
+        id: "camera-quality",
+        label: "Qualité caméra",
+        subtext: s.enabled ? `${resLabel} · ${fpsLabel} · ${brLabel}` : "Désactivée"
+      },
+        h(Group, { key: "camera-quality-toggle-group" },
+          item("camera-quality-enabled", (s.enabled ? "✅ " : "⬜ ") + "Activer la qualité perso", () => this.set({ enabled: !this.settings.enabled }))
+        ),
+        h(Group, { key: "camera-quality-settings-group" },
+          h(Item, { key: "camera-quality-res", id: "camera-quality-res", label: `Résolution (${resLabel})` },
+            ...choiceList("camera-quality-res", HEIGHT_CHOICES, (v) => `${v}p`, s.height, !(s.height > 0), (v) => ({ height: v }), { height: 0 },
+              () => this.promptNumber("Résolution caméra (en p)", s.height > 0 ? s.height : 360, 1, (n) => this.set({ height: n, enabled: true })))
+          ),
+          h(Item, { key: "camera-quality-fps", id: "camera-quality-fps", label: `FPS (${fpsLabel})` },
+            ...choiceList("camera-quality-fps", FPS_CHOICES, (v) => `${v} FPS`, s.fps, !(s.fps > 0), (v) => ({ fps: v }), { fps: 0 },
+              () => this.promptNumber("FPS caméra", s.fps > 0 ? s.fps : 15, 1, (n) => this.set({ fps: n, enabled: true })))
+          ),
+          h(Item, { key: "camera-quality-bitrate", id: "camera-quality-bitrate", label: `Débit (${brLabel})` },
+            ...choiceList("camera-quality-bitrate", BITRATE_CHOICES, (v) => `${v} kbps`, s.bitrate, !(s.bitrate > 0), (v) => ({ bitrate: v }), { bitrate: -1 },
+              () => this.promptNumber("Débit caméra (en kbps)", s.bitrate > 0 ? s.bitrate : 300, 1, (n) => this.set({ bitrate: n, enabled: true })))
+          )
+        )
+      )
+    );
   }
 
+  // Anti-crash: any problem here leaves Discord's menu untouched instead of breaking it.
   patchMenu(tree) {
     try {
       const menu = BdApi.Utils.findInTree(tree, (n) => n?.navId === "video-device-context", { walkable: ["props", "children"] });
       if (!menu) return;
-      const section = BdApi.ContextMenu.buildMenuChildren([{ type: "group", items: [this.buildSection()] }]);
-      menu.children = [...[menu.children].flat(), ...[section].flat()];
+      const types = this.findMenuTypes(menu);
+      if (!types) {
+        if (!this.warnedTypes) {
+          this.warnedTypes = true;
+          console.warn(`[${PLUGIN}] menu item types not found, camera menu left unchanged`);
+        }
+        return;
+      }
+      const section = this.buildSection(types);
+      menu.children = [...[menu.children].flat(), section];
     } catch (e) {
       console.error(`[${PLUGIN}] menu patch failed`, e);
     }
