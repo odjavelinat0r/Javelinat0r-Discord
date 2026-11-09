@@ -1,7 +1,7 @@
 {
-    "version":  19,
-    "published":  "2026-11-09T05:48:46.2663860Z",
-    "notes":  "",
+    "version":  20,
+    "published":  "2026-11-09T05:55:42.5453601Z",
+    "notes":  "Le canard 4.1.1 : le Pain repart de zéro à chaque Grand Envol, et le défi Sans les mains commence avec 1 Mare et 1 Caneton",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -50,8 +50,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "145af71ab7669b487f79fef525f22274b2bf62af32bb28ce625e573243cd13a1",
-                        "size":  129060
+                        "sha256":  "83284ef354005b64297b5863bb087159f8221aee35cd70c7cc0b9b72642f21b7",
+                        "size":  129416
                     },
                     {
                         "name":  "MentionFix.plugin.js",

@@ -1,7 +1,7 @@
 /**
  * @name LeCanard
  * @author Kerminat0r
- * @version 4.1.0
+ * @version 4.1.1
  * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux, collection de canards et skins, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
  */
 
@@ -142,7 +142,7 @@ const RELICS = [
 ];
 
 const CHALLENGES = [
-  { id: "mains", name: "Sans les mains", note: "Les clics ne rapportent rien", noClick: true },
+  { id: "mains", name: "Sans les mains", note: "Les clics ne rapportent rien. Tu commences avec 1 Mare et 1 Caneton.", noClick: true, starter: { mare: 1, caneton: 1 } },
   { id: "mares", name: "Que des Mares", note: "Seules les Mares sont en vente", onlyMare: true },
   { id: "regime", name: "Régime sec", note: "Marché fermé et faim permanente", noMarket: true },
   { id: "austerite", name: "Austérité", note: "Aucune amélioration", noUpgrades: true },
@@ -514,10 +514,10 @@ function prestigeGain(game) {
   return Math.floor(Math.cbrt(game.run / PRESTIGE_STEP) * (hasRelic(game, "r5") ? 1.5 : 1));
 }
 
-// What survives a restart: everything except the run itself.
+// What survives a restart: everything except the run itself. Pain starts again from zero too.
 function restart(game) {
   const keep = { ...game };
-  for (const key of ["coins", "run", "owned", "upgrades", "hunger", "challenge"]) delete keep[key];
+  for (const key of ["coins", "run", "owned", "upgrades", "hunger", "challenge", "bread"]) delete keep[key];
   return clean({ ...keep, version: SAVE_VERSION });
 }
 
@@ -535,6 +535,8 @@ function startChallenge(game, id) {
   if (game.challenge || game.challengesDone.includes(id)) return game;
   const next = restart(game);
   next.challenge = id;
+  // Without clicks there'd be no way to earn the first Coins, so some challenges come with a starter kit.
+  for (const [building, count] of Object.entries(CHALLENGES.find((c) => c.id === id)?.starter ?? {})) next.owned[building] += count;
   return next;
 }
 
