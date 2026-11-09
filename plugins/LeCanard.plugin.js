@@ -1,8 +1,8 @@
 /**
  * @name LeCanard
  * @author Kerminat0r
- * @version 4.0.0
- * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux, collection de canards, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
+ * @version 4.1.0
+ * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux, collection de canards et skins, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
  */
 
 const SAVE_VERSION = 4;
@@ -287,7 +287,7 @@ const fresh = () => ({
   owned: {}, upgrades: [], tree: [], relics: [], savedAt: Date.now(), bread: 0, hunger: 0, dogs: 0,
   gems: 0, eggs: 0, fragments: 0, fishStock: 0, expeditions: [], nextId: 1, ducks: [], team: [], nest: null,
   challenge: null, challengesDone: [], achievements: [], stats: {}, daily: null, codesUsed: [], codesSent: [],
-  catalogue: [], hats: [], hat: null, trophies: [], cooldowns: {}, stories: []
+  catalogue: [], hats: [], hat: null, skin: null, trophies: [], cooldowns: {}, stories: []
 });
 
 // Old saves earned plumes from a formula that ran away, so large piles are compressed once.
@@ -322,6 +322,7 @@ function clean(saved) {
   game.hats = known(game.hats, HATS);
   game.trophies = known(game.trophies, TROPHIES);
   game.hat = game.hats.includes(game.hat) ? game.hat : null;
+  game.skin = game.catalogue.includes(game.skin) ? game.skin : null;
   game.challenge = CHALLENGES.some((c) => c.id === game.challenge) ? game.challenge : null;
   game.expeditions = list(game.expeditions).filter((e) => e && ZONES.some((z) => z.id === e.zone) && Number.isFinite(e.end) && e.ducklings > 0);
   game.ducks = list(game.ducks).filter((d) => d && d.id && Array.isArray(d.traits));
@@ -673,6 +674,22 @@ function zoneRisk(game, zone) {
 }
 
 const lootBonus = (game) => (hasNode(game, "e3") ? 2 : 1) * (hasRelic(game, "r4") ? 1.5 : 1) * (has(game, "panier") ? 1.5 : 1) * (1 + duckBonus(game, "loot"));
+
+// What a trip should bring back on average, shown before you send it. Voice time adds up to +50 %.
+function estimateExpedition(game, zone, ducklings) {
+  const size = ducklings / (ducklings + 20);
+  const loot = lootBonus(game);
+  const risk = zoneRisk(game, zone);
+  return {
+    coins: perSecond(game) * (zoneDuration(game, zone) / 1000) * 0.3 * size * loot,
+    eggs: zone.egg * size * 2 * loot,
+    gems: zone.gem * size * 2 * loot,
+    fragments: zone.fragment * size * 2 * loot,
+    lostAverage: Math.round(ducklings * risk),
+    lostMost: Math.min(ducklings, Math.round(ducklings * risk * 2)),
+    find: Math.min(1, zone.find * findBonus(game))
+  };
+}
 
 function sendExpedition(game, zoneId, ducklings, now) {
   const zone = ZONES.find((z) => z.id === zoneId);
@@ -1047,6 +1064,14 @@ const EGG_HUNT_MS = 30000;
 const RACE_MS = 5000;
 const FISH_CASTS = 5;
 const NEWS_MS = 8000;
+const GOLD_SHOW_MS = 3000;
+const FISH_PERIOD_MS = 2400;
+const FISH_ZONE = 0.24;
+const HEAD_X = 18;
+const HEAD_Y = 9;
+const TRIP_SHARES = [0.25, 0.5, 1];
+const GIFT_NAMES = { pain: "Pain", gemme: "gemmes", oeuf: "œufs" };
+const SHOWABLE = [["caneton", "Canetons (la file derrière le canard)"], ...GENERATORS.filter((g) => g.id !== "caneton").map((g) => [g.id, g.name]), ["chien", "Chiens de garde"], ["counter", "Compteur de Coins au-dessus du canard"], ["hat", "Chapeau"], ["badge", "Badge du skin"]];
 const VISITOR_SECONDS = 15;
 const PING_SECONDS = 5;
 const SOUND_GAP_MS = 250;
@@ -1115,6 +1140,7 @@ const TABS = [
   { id: "quests", name: "Quêtes", open: () => true },
   { id: "trophies", name: "Succès", open: () => true },
   { id: "stats", name: "Stats", open: () => true },
+  { id: "display", name: "Affichage", open: () => true },
   { id: "gifts", name: "Cadeaux", open: () => true }
 ];
 
@@ -1138,7 +1164,7 @@ class LeCanard {
     this.dispatcher = this.voice?._dispatcher ?? this.users?._dispatcher;
     this.game = clean(BdApi.Data.load(PLUGIN, "game"));
     Object.assign(this, { x: 80, direction: 1, mode: "walk", modeUntil: 0, pings: [], frame: 0, frameAt: 0, seen: null, channel: null, rows: null, soundAt: 0, tab: "shop", armed: null, parents: [], clickTimes: [], newsIndex: 0, newsAt: 0 });
-    Object.assign(this, { frenzyUntil: 0, clickFrenzyUntil: 0, cloverUntil: 0, hunt: null, race: null, fishing: null, slotsShown: null });
+    Object.assign(this, { frenzyUntil: 0, clickFrenzyUntil: 0, cloverUntil: 0, hunt: null, race: null, fishing: null, slotsShown: null, tripShare: 0.5, giftKind: "pain", giftAmount: 1000 });
     this.lastActive = Date.now();
     this.lastTick = Date.now();
     this.next = {};
@@ -1205,22 +1231,29 @@ class LeCanard {
     duck.id = DUCK_ID;
     duck.title = "Clic : gagner des Coins. Clic droit : menu du jeu.";
     duck.style.cssText = `position:fixed;left:0;bottom:0;z-index:9999;width:${SIZE}px;height:${SIZE}px;cursor:pointer;user-select:none`;
-    const body = this.sprite(SIZE, "position:relative");
+    // The wrapper flips left and right; the skin inside carries the colour; the hat rides on top.
+    const body = document.createElement("div");
+    body.style.cssText = `position:relative;width:${SIZE}px;height:${SIZE}px`;
+    const skin = this.sprite(SIZE, "position:absolute;left:0;top:0");
     const hat = document.createElement("canvas");
     hat.style.cssText = "position:absolute;image-rendering:pixelated;pointer-events:none";
-    body.append(hat);
+    body.append(skin, hat);
+    const badge = document.createElement("div");
+    badge.style.cssText = "position:absolute;right:-6px;top:-4px;font-size:14px;pointer-events:none";
     const label = "position:absolute;left:50%;transform:translateX(-50%);padding:1px 6px;border-radius:7px;font:700 11px var(--font-primary,sans-serif);white-space:nowrap;pointer-events:none";
     const counter = document.createElement("div");
     counter.style.cssText = `${label};bottom:calc(100% + 6px);background:rgba(17,18,20,.85);color:#ffd84d`;
     const bubble = document.createElement("div");
     bubble.style.cssText = `${label};bottom:calc(100% + 26px);background:#fff;color:#111;display:none`;
-    duck.append(body, counter, bubble);
+    duck.append(body, badge, counter, bubble);
     duck.onclick = () => this.peck();
     duck.oncontextmenu = (e) => { e.preventDefault(); this.togglePanel(); };
     document.body.append(duck);
-    Object.assign(this, { element: duck, body, hatCanvas: hat, counter, bubble });
+    Object.assign(this, { element: duck, body, skin, badge, hatCanvas: hat, counter, bubble });
     this.buildWorld();
     this.drawHat();
+    this.applySkin();
+    this.applyDisplay();
     this.showCount();
   }
 
@@ -1232,9 +1265,31 @@ class LeCanard {
     canvas.width = art.width;
     canvas.height = art.height;
     canvas.getContext("2d").drawImage(art, 0, 0);
-    canvas.style.display = "block";
-    canvas.style.left = `${30 - art.width / 2}px`;
-    canvas.style.top = `${4 - art.height}px`;
+    canvas.style.display = this.visible("hat") ? "block" : "none";
+    canvas.style.left = `${HEAD_X - art.width / 2}px`;
+    canvas.style.top = `${HEAD_Y - art.height}px`;
+  }
+
+  applySkin() {
+    const entry = CATALOGUE.find((c) => c.id === this.game.skin);
+    this.skin.style.filter = entry ? `hue-rotate(${entry.hue}deg) saturate(1.2)` : "";
+    this.badge.textContent = entry ? entry.badge : "";
+    this.badge.style.display = entry && this.visible("badge") ? "block" : "none";
+  }
+
+  hidden() {
+    const saved = BdApi.Data.load(PLUGIN, "hidden");
+    return Array.isArray(saved) ? saved : [];
+  }
+
+  visible(id) {
+    return !this.hidden().includes(id);
+  }
+
+  applyDisplay() {
+    this.counter.style.display = this.visible("counter") ? "block" : "none";
+    this.drawHat();
+    this.applySkin();
   }
 
   showCount() {
@@ -1366,7 +1421,7 @@ class LeCanard {
 
   drawGroup(pen, name, now) {
     const owned = this.worldCount(name);
-    if (!owned) return;
+    if (!owned || !this.visible(name)) return;
     const count = Math.min(SHOW_MAX, owned);
     const art = this.sprites[name][Math.min(3, Math.floor(owned / MILESTONE))];
     let spot = null;
@@ -1397,7 +1452,7 @@ class LeCanard {
   }
 
   drawChain(pen, now) {
-    if (!this.strip.complete || !this.strip.naturalWidth) return;
+    if (!this.strip.complete || !this.strip.naturalWidth || !this.visible("caneton")) return;
     const owned = this.game.owned.caneton;
     const count = Math.min(CHAIN_MAX, owned);
     let spot = null;
@@ -1498,19 +1553,26 @@ class LeCanard {
     return node;
   }
 
+  // The golden duck fills most of the window for 3 seconds. Click it to get the bonus.
   spawnGold() {
     this.schedule("gold");
+    const side = Math.floor(Math.min(window.innerWidth, window.innerHeight) * 0.7);
     const gold = document.createElement("div");
     gold.id = GOLD_ID;
-    gold.title = "Attrape-le !";
-    gold.style.cssText = `position:fixed;left:0;bottom:0;z-index:9999;width:${SIZE}px;height:${SIZE}px;cursor:pointer;filter:sepia(1) saturate(4) brightness(1.2) drop-shadow(0 0 6px #ffd84d)`;
-    gold.append(this.sprite(SIZE, "transform:scaleX(-1)"));
+    gold.title = "Clique vite !";
+    gold.style.cssText = `position:fixed;left:50%;top:50%;z-index:100003;width:${side}px;height:${side}px;margin:${-side / 2}px 0 0 ${-side / 2}px;cursor:pointer;filter:sepia(1) saturate(4) brightness(1.2) drop-shadow(0 0 30px #ffd84d);transform:scale(.2);opacity:0;transition:transform .25s ease-out,opacity .25s ease-out`;
+    gold.append(this.sprite(side));
     gold.onclick = () => this.catchGold();
     document.body.append(gold);
-    this.goldX = window.innerWidth;
+    requestAnimationFrame(() => requestAnimationFrame(() => { gold.style.transform = "scale(1)"; gold.style.opacity = "1"; }));
+    setTimeout(() => {
+      if (!gold.isConnected) return;
+      gold.style.opacity = "0";
+      gold.style.transform = "scale(.2)";
+      setTimeout(() => gold.remove(), 260);
+    }, GOLD_SHOW_MS);
     this.chime(1320);
   }
-
   // Four kinds of golden duck, picked at random when caught.
   catchGold() {
     document.getElementById(GOLD_ID)?.remove();
@@ -1666,7 +1728,7 @@ class LeCanard {
       if (this.mode !== "stand" && this.mode !== "sleep" && now - this.frameAt >= wait) {
         this.frameAt = now;
         this.frame = (this.frame + 1) % FRAMES;
-        this.body.style.backgroundPositionX = `${-this.frame * SIZE}px`;
+        this.skin.style.backgroundPositionX = `${-this.frame * SIZE}px`;
       }
       this.element.style.transform = `translateX(${this.x}px)`;
       this.body.style.transform = `scaleX(${this.direction})`;
@@ -1674,13 +1736,8 @@ class LeCanard {
       this.drawWorld(now);
       this.moveFox();
       this.moveGull();
-      if (this.fishing) this.moveFish(now);
-      const gold = document.getElementById(GOLD_ID);
-      if (gold) {
-        this.goldX -= GOLD_SPEED;
-        gold.style.transform = `translateX(${this.goldX}px)`;
-        if (this.goldX < -SIZE) gold.remove();
-      }
+      if (this.fishing) this.moveFish();
+
     } catch (e) {
       console.error(`[${PLUGIN}] step failed`, e);
     }
@@ -1860,7 +1917,7 @@ class LeCanard {
     const name = document.createElement("div");
     name.style.fontWeight = "600";
     const small = document.createElement("div");
-    small.style.cssText = "font-size:11px;color:#b5bac1";
+    small.style.cssText = "font-size:11px;color:#b5bac1;white-space:pre-line";
     this.updaters.push(() => { name.textContent = this.live(title); small.textContent = this.live(note); });
     words.append(name, small);
     const actions = document.createElement("div");
@@ -1933,9 +1990,28 @@ class LeCanard {
       return `${event ? `⚡ ${event.name}\n` : ""}1 Pain = ${format(breadPrice(game(), Date.now()))} Coins (${trend})\nStock : ${format(game().bread)} / ${format(breadCapacity(game()))} · Frais ${Math.round(marketFee(game()) * 100)} %\nProchain prix dans ${duration(left)}`;
     });
     for (const amount of BREAD_STEPS) {
-      this.row(`${format(amount)} Pain`, "", this.button("Acheter", () => game().coins >= breadPrice(game(), Date.now()) && game().bread < breadCapacity(game()), () => buyBread(game(), amount, Date.now())),
-        this.button("Vendre", () => game().bread >= 1, () => sellBread(game(), amount, Date.now())));
+      this.row(`${format(amount)} Pain`, "", this.button(() => this.buyLabel(amount), () => this.buyCount(amount) >= 1, () => buyBread(game(), amount, Date.now())),
+        this.button(() => this.sellLabel(amount), () => game().bread >= 1, () => sellBread(game(), amount, Date.now())));
     }
+  }
+
+  buyCount(amount) {
+    const game = this.game;
+    const price = breadPrice(game, Date.now()) * (1 + marketFee(game));
+    return Math.max(0, Math.min(amount, Math.floor(breadCapacity(game) - game.bread), Math.floor(game.coins / price)));
+  }
+
+  // The buttons say exactly what will happen: how many, and for how much.
+  buyLabel(amount) {
+    const count = this.buyCount(amount);
+    const price = breadPrice(this.game, Date.now()) * (1 + marketFee(this.game));
+    return count >= 1 ? `Acheter ${format(count)} : -${format(count * price)}` : "Acheter";
+  }
+
+  sellLabel(amount) {
+    const count = Math.min(amount, Math.floor(this.game.bread));
+    const income = count * breadPrice(this.game, Date.now()) * (1 - marketFee(this.game));
+    return count >= 1 ? `Vendre ${format(count)} : +${format(income)}` : "Vendre";
   }
 
   drawChart(chart) {
@@ -1971,14 +2047,29 @@ class LeCanard {
     }
     if (game().expeditions.length === 0) this.text("Personne en route.");
     this.heading("Partir");
+    this.row("Combien de Canetons envoyer ?", () => `${this.tripSize(this.tripShare)} sur ${game().owned.caneton} (minimum ${EXPEDITION_MIN})`,
+      ...TRIP_SHARES.map((share) => this.button(() => `${share * 100} %${this.tripShare === share ? " ✓" : ""}`, () => true, () => { this.tripShare = share; })));
     for (const zone of ZONES) {
-      this.row(zone.name, () => `${duration(zoneDuration(game(), zone))} · risque ${Math.round(zoneRisk(game(), zone) * 100)} %`,
-        ...[0.25, 0.5, 1].map((share) => this.button(`${share * 100} %`, () => this.tripSize(share) >= EXPEDITION_MIN && game().expeditions.length < expeditionSlots(game()), () => sendExpedition(game(), zone.id, this.tripSize(share), Date.now()))));
+      this.row(zone.name, () => this.tripPreview(zone),
+        this.button("Partir", () => this.tripSize(this.tripShare) >= EXPEDITION_MIN && game().expeditions.length < expeditionSlots(game()), () => sendExpedition(game(), zone.id, this.tripSize(this.tripShare), Date.now())));
     }
     if (game().stories.length) {
       this.heading("Carnet de voyage");
       this.text(game().stories.slice(0, 8).join("\n"));
     }
+  }
+
+  tripPreview(zone) {
+    const count = this.tripSize(this.tripShare);
+    const about = estimateExpedition(this.game, zone, Math.max(count, 1));
+    const odds = (value) => (value >= 1 ? `~${format(value)}` : `${Math.round(value * 100)} % de chance`);
+    return [
+      `${duration(zoneDuration(this.game, zone))} · ${count} Canetons`,
+      `Gain : ~${format(about.coins)} Coins (+50 % si tu restes en vocal)`,
+      `Œufs ${odds(about.eggs)} · Gemmes ${odds(about.gems)} · Éclats ~${format(about.fragments)}`,
+      `Pertes : ${about.lostAverage} Canetons en moyenne, ${about.lostMost} au pire`,
+      `Canard de collection ${Math.round(about.find * 100)} % · Trophée ${Math.round(about.find * 60)} %`
+    ].join("\n");
   }
 
   tripSize(share) {
@@ -2035,7 +2126,7 @@ class LeCanard {
     this.heading("Pêche");
     this.row("5 lancers", () => `Poissons en stock : ${game().fishStock} (${FISH_PER_GEM} = 1 gemme)`, this.button(wait("fish", "Pêcher"), ready("fish"), () => {
       if (!useGame(game(), "fish", Date.now())) return;
-      this.fishing = { casts: FISH_CASTS, marker: 0, speed: 0.012 + Math.random() * 0.01, zone: 0.3 + Math.random() * 0.4, width: 0.16, log: [] };
+      this.fishing = { casts: FISH_CASTS, start: performance.now(), zone: 0.15 + Math.random() * 0.6, width: FISH_ZONE, log: [] };
     }), this.button("Échanger", () => game().fishStock >= FISH_PER_GEM, () => { const gems = tradeFish(game()); this.say(`+${gems} gemme(s) !`, 2500); }));
     this.heading("Machine à sous");
     this.row(`${SLOT_COST} Pain la partie`, () => this.slotsShown ?? "Trois symboles identiques : jackpot !", this.button("Jouer", () => game().bread >= SLOT_COST, () => {
@@ -2124,17 +2215,21 @@ class LeCanard {
     this.text(() => fishing.log.slice(-5).join("\n"));
   }
 
+  // The float moves at one steady speed, worked out from the clock, so every cast feels the same.
+  fishMarker() {
+    const phase = ((performance.now() - this.fishing.start) % FISH_PERIOD_MS) / FISH_PERIOD_MS;
+    return phase < 0.5 ? phase * 2 : 2 - phase * 2;
+  }
+
   moveFish() {
-    const fishing = this.fishing;
-    fishing.marker += fishing.speed;
-    if (fishing.marker >= 1 || fishing.marker <= 0) { fishing.speed *= -1; fishing.marker = Math.max(0, Math.min(1, fishing.marker)); }
-    if (this.fishBob?.isConnected) this.fishBob.style.left = `calc(${fishing.marker * 100}% - 8px)`;
+    if (this.fishBob?.isConnected) this.fishBob.style.left = `calc(${this.fishMarker() * 100}% - 8px)`;
   }
 
   strike() {
     const fishing = this.fishing;
     if (!fishing) return;
-    const inside = fishing.marker >= fishing.zone && fishing.marker <= fishing.zone + fishing.width;
+    const marker = this.fishMarker();
+    const inside = marker >= fishing.zone - 0.02 && marker <= fishing.zone + fishing.width + 0.02;
     if (inside) {
       const { fish, duck } = catchFish(this.game, Math.random);
       fishing.log.push(`🐟 ${fish.name} !${duck ? ` Et ${duck.name} !` : ""}`);
@@ -2142,8 +2237,7 @@ class LeCanard {
       fishing.log.push("Raté...");
     }
     fishing.casts--;
-    fishing.zone = 0.1 + Math.random() * 0.7;
-    fishing.speed = Math.sign(fishing.speed) * (0.012 + Math.random() * 0.012);
+    fishing.zone = 0.15 + Math.random() * 0.6;
     if (fishing.casts <= 0) {
       this.say(fishing.log.filter((l) => l.startsWith("🐟")).length ? "Belle pêche !" : "Rien cette fois...", 3000);
       this.fishing = null;
@@ -2151,7 +2245,6 @@ class LeCanard {
     this.dirty = true;
     this.refresh();
   }
-
   catalogueIcon(entry, known) {
     const icon = document.createElement("canvas");
     icon.width = CELL * 2;
@@ -2176,11 +2269,15 @@ class LeCanard {
     this.text(() => `Canards célèbres : ${game().catalogue.length} / ${CATALOGUE.length} (+${CATALOGUE_BONUS * 100} % de production chacun).`);
     const grid = document.createElement("div");
     grid.style.cssText = "display:grid;grid-template-columns:repeat(5,1fr);gap:6px";
+    this.text("Clique sur un canard trouvé pour porter son skin.");
+    this.row("Skin classique", "", this.button(() => (game().skin ? "Porter" : "Porté"), () => Boolean(game().skin), () => { game().skin = null; this.applySkin(); }));
     for (const entry of CATALOGUE) {
       const known = game().catalogue.includes(entry.id);
       const cell = document.createElement("div");
-      cell.title = known ? entry.name : `??? (se trouve via : ${sources[entry.source]})`;
-      cell.style.cssText = "display:flex;flex-direction:column;align-items:center;padding:4px;border-radius:6px;background:#1e1f22;font-size:10px;text-align:center;color:#b5bac1";
+      cell.title = known ? `${entry.name} : clique pour le porter` : `??? (se trouve via : ${sources[entry.source]})`;
+      const worn = game().skin === entry.id;
+      cell.style.cssText = `display:flex;flex-direction:column;align-items:center;padding:4px;border-radius:6px;background:#1e1f22;font-size:10px;text-align:center;color:#b5bac1;cursor:${known ? "pointer" : "default"};outline:${worn ? "2px solid #5865f2" : "none"}`;
+      if (known) cell.onclick = () => { game().skin = entry.id; this.applySkin(); this.celebrate(); this.save(); this.dirty = true; this.refresh(); };
       const name = document.createElement("div");
       name.textContent = known ? entry.name.replace("Canard ", "") : "???";
       cell.append(this.catalogueIcon(entry, known), name);
@@ -2272,18 +2369,46 @@ class LeCanard {
     });
   }
 
+  tab_display() {
+    this.text("Choisis ce qui s'affiche à l'écran. Les événements et le canard principal restent toujours visibles.");
+    this.row("Tout le domaine en bas de l'écran", "", this.button(() => (this.setting("world") ? "Visible" : "Caché"), () => true, () => {
+      const on = !this.setting("world");
+      BdApi.Data.save(PLUGIN, "world", on);
+      this.canvas.style.display = on ? "block" : "none";
+    }));
+    this.row("Tout afficher / tout cacher", "", this.button("Tout afficher", () => this.hidden().length > 0, () => { BdApi.Data.save(PLUGIN, "hidden", []); this.applyDisplay(); }),
+      this.button("Tout cacher", () => true, () => { BdApi.Data.save(PLUGIN, "hidden", SHOWABLE.map(([id]) => id)); this.applyDisplay(); }));
+    this.heading("Un par un");
+    for (const [id, name] of SHOWABLE) {
+      this.row(name, "", this.button(() => (this.visible(id) ? "Visible ✓" : "Caché"), () => true, () => {
+        const hidden = this.hidden();
+        BdApi.Data.save(PLUGIN, "hidden", hidden.includes(id) ? hidden.filter((h) => h !== id) : [...hidden, id]);
+        this.applyDisplay();
+      }));
+    }
+  }
+
   tab_gifts() {
     const game = () => this.game;
     this.text("Fais un cadeau à un ami : copie le code et envoie-le toi-même. Rien n'est jamais envoyé pour toi.");
     this.heading("Offrir");
-    const gift = (kind, amount, enabled) => this.button("Copier le code", enabled, () => {
-      const code = makeGift(game(), kind, amount, Math.random);
-      if (code) this.copy(code);
-    });
-    this.row("1 000 Pain", () => `Tu as ${format(game().bread)} Pain`, gift("pain", 1000, () => game().bread >= 1000));
-    this.row("1 gemme", () => `Tu as ${game().gems} gemmes`, gift("gemme", 1, () => game().gems >= 1));
-    this.row("1 œuf", () => `Tu as ${game().eggs} œufs`, gift("oeuf", 1, () => game().eggs >= 1));
-    this.heading("Recevoir");
+    const fields = { pain: "bread", gemme: "gems", oeuf: "eggs" };
+    this.row("Quoi ?", () => `Tu as ${format(game().bread)} Pain · ${game().gems} gemmes · ${game().eggs} œufs`,
+      ...Object.keys(GIFT_NAMES).map((kind) => this.button(() => `${GIFT_NAMES[kind]}${this.giftKind === kind ? " ✓" : ""}`, () => true, () => { this.giftKind = kind; })));
+    const amount = document.createElement("input");
+    amount.type = "number";
+    amount.min = "1";
+    amount.value = String(this.giftAmount);
+    amount.placeholder = "Combien ?";
+    amount.style.cssText = "width:100%;box-sizing:border-box;padding:8px;margin:4px 0 6px;border:none;border-radius:4px;background:#1e1f22;color:#fff";
+    amount.onkeydown = (e) => e.stopPropagation();
+    amount.oninput = () => { this.giftAmount = Math.floor(Number(amount.value)); this.refresh(); };
+    this.rows.body.append(amount);
+    this.rows.body.append(this.button(() => `Copier le code : ${format(Math.max(0, this.giftAmount || 0))} ${GIFT_NAMES[this.giftKind]}`,
+      () => this.giftAmount >= 1 && this.giftAmount <= GIFT_LIMIT && game()[fields[this.giftKind]] >= this.giftAmount, () => {
+        const code = makeGift(game(), this.giftKind, this.giftAmount, Math.random);
+        if (code) this.copy(code);
+      }));    this.heading("Recevoir");
     const input = document.createElement("input");
     input.placeholder = "Colle un code COIN-...";
     input.style.cssText = "width:100%;box-sizing:border-box;padding:8px;margin-bottom:6px;border:none;border-radius:4px;background:#1e1f22;color:#fff";
@@ -2348,4 +2473,4 @@ class LeCanard {
 }
 
 module.exports = LeCanard;
-Object.assign(module.exports, { clean, perSecond, perClick, costOf, prestige, prestigeGain, offlineGain, format, earn, buyGenerator, buyUpgrade, upgradeVisible, buyNode, sendExpedition, claimExpedition, startHatch, collectNest, startBreeding, marketIndex, marketEvent, buyBread, sellBread, advance, startChallenge, makeGift, openGift, refreshDaily, claimQuest, eggHuntBoard, eggHuntReward, runRace, catchFish, tradeFish, spinSlots, useGame, findCatalogue, headlines, ACHIEVEMENTS, UPGRADES, GENERATORS, CATALOGUE, HATS, TROPHIES, TREE });
+Object.assign(module.exports, { estimateExpedition, clean, perSecond, perClick, costOf, prestige, prestigeGain, offlineGain, format, earn, buyGenerator, buyUpgrade, upgradeVisible, buyNode, sendExpedition, claimExpedition, startHatch, collectNest, startBreeding, marketIndex, marketEvent, buyBread, sellBread, advance, startChallenge, makeGift, openGift, refreshDaily, claimQuest, eggHuntBoard, eggHuntReward, runRace, catchFish, tradeFish, spinSlots, useGame, findCatalogue, headlines, ACHIEVEMENTS, UPGRADES, GENERATORS, CATALOGUE, HATS, TROPHIES, TREE });
