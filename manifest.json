@@ -1,7 +1,7 @@
 {
-    "version":  21,
-    "published":  "2026-11-09T06:06:24.7831313Z",
-    "notes":  "Le canard 4.2 : fini le moonwalk, vrai cri de canard pour le canard doré (réglable), combo de clics, achat par 10/100/Max, Majordome canard, rapport de retour, effets dorés",
+    "version":  22,
+    "published":  "2026-11-09T06:06:55.7054518Z",
+    "notes":  "",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
