@@ -1,7 +1,7 @@
 {
-    "version":  18,
-    "published":  "2026-11-09T05:46:53.9457390Z",
-    "notes":  "Le canard 4.1 : chapeaux bien placés, skins de canards, prix sur les boutons du marché, expéditions plus claires, pêche plus simple, onglet Affichage, grand canard doré, cadeaux au choix",
+    "version":  19,
+    "published":  "2026-11-09T05:48:46.2663860Z",
+    "notes":  "",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
