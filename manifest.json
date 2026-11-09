@@ -1,7 +1,7 @@
 {
-    "version":  15,
-    "published":  "2026-11-08T22:36:25.7264878Z",
-    "notes":  "",
+    "version":  16,
+    "published":  "2026-11-09T05:22:25.8467997Z",
+    "notes":  "Le canard 4.0 : 18 bâtiments, 100+ améliorations, minijeux, collection, chapeaux, événements et 160 succès",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -50,8 +50,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "d3845950c8790554d3846244aa5d6884129cdede97c16bc3c8d1ce3d273c06f8",
-                        "size":  74808
+                        "sha256":  "0d272ba1094f70c50c0816588bfd33a52f9cb2b9c2e8e4e3498b480a835bd2ca",
+                        "size":  121920
                     },
                     {
                         "name":  "MentionFix.plugin.js",
