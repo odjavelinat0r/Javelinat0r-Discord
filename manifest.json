@@ -1,7 +1,7 @@
 {
-    "version":  20,
-    "published":  "2026-11-09T05:55:42.5453601Z",
-    "notes":  "Le canard 4.1.1 : le Pain repart de zéro à chaque Grand Envol, et le défi Sans les mains commence avec 1 Mare et 1 Caneton",
+    "version":  21,
+    "published":  "2026-11-09T06:06:24.7831313Z",
+    "notes":  "Le canard 4.2 : fini le moonwalk, vrai cri de canard pour le canard doré (réglable), combo de clics, achat par 10/100/Max, Majordome canard, rapport de retour, effets dorés",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -50,8 +50,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "83284ef354005b64297b5863bb087159f8221aee35cd70c7cc0b9b72642f21b7",
-                        "size":  129416
+                        "sha256":  "9015c2bd73cf5ec340ca132b334026e5e7bb6fd7d8bf60d62fe9c3ffd523312f",
+                        "size":  210098
                     },
                     {
                         "name":  "MentionFix.plugin.js",
