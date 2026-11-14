@@ -1,7 +1,7 @@
 /**
  * @name LeCanard
  * @author Kerminat0r
- * @version 4.3.0
+ * @version 4.4.0
  * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux (dont la Chasse aux pièces au clavier), collection de canards et skins, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
  */
 
@@ -246,7 +246,7 @@ const QUESTS = [
   { id: "jeux", name: "Joue {n} parties de minijeux", stat: "gamesPlayed", goal: 3 }
 ];
 
-const STATS = ["leaps", "goldCaught", "expeditions", "foxes", "trades", "voiceSeconds", "gifts", "rainDucks", "seagulls", "clovers", "fish", "racesWon", "racesLost", "slotsPlayed", "jackpots", "eggsFound", "gamesPlayed", "lostDucks", "bestPerSecond", "fastestMinute", "hatched", "arcadeGames", "arcadeCoins", "arcadeBest"];
+const STATS = ["leaps", "goldCaught", "expeditions", "foxes", "trades", "voiceSeconds", "gifts", "rainDucks", "seagulls", "clovers", "fish", "racesWon", "racesLost", "slotsPlayed", "jackpots", "eggsFound", "gamesPlayed", "lostDucks", "bestPerSecond", "fastestMinute", "hatched", "arcadeGames", "arcadeCoins", "arcadeBest", "arcadeItems"];
 
 const ACHIEVEMENTS = [];
 function tiers(prefix, label, read, goals, secret) {
@@ -286,6 +286,7 @@ tiers("s-poor", "Fauché", (g) => (g.lifetime > 1e6 && g.coins < 1 ? 1 : 0), [1]
 tiers("s-goldfish", "Poisson doré", (g) => g.stats.goldfish ?? 0, [1], true);
 tiers("arcade", "Chasseur de pièces", (g) => g.stats.arcadeCoins, [50, 500, 5000]);
 tiers("arcade-best", "Esquiveur", (g) => g.stats.arcadeBest, [25, 75, 150]);
+tiers("arcade-items", "Ramasseur", (g) => g.stats.arcadeItems, [10, 100]);
 
 const fresh = () => ({
   version: SAVE_VERSION, coins: 0, run: 0, lifetime: 0, clicks: 0, feathers: 0, feathersTotal: 0,
@@ -1090,6 +1091,26 @@ const PANIC_WINDOW_MS = 30000;
 const WATCH_MS = 1000;
 const ARCADE_ID = "le-canard-arcade";
 const ARCADE_SPEED = 300;
+const ARCADE_GRAVITY = 700;
+const ARCADE_LIFT = 1500;
+const ARCADE_MAX_RISE = 380;
+const ARCADE_MAX_FALL = 520;
+const ARCADE_MAGNET_RANGE = 260;
+const ARCADE_ITEM_EVERY = [6, 12];
+const ARCADE_POWER_EVERY = [14, 22];
+// Loot, from common to very rare. Weight = how often; life = seconds before it disappears.
+const ARCADE_ITEMS = [
+  { id: "pain", icon: "🍞", label: "+100 Pain", color: "#f2c230", weight: 60, life: 9, amount: 100 },
+  { id: "eclat", icon: "✨", label: "+2 éclats", color: "#e9e4ff", weight: 25, life: 8, amount: 2 },
+  { id: "gemme", icon: "💎", label: "+1 gemme", color: "#8fd0ff", weight: 12, life: 6, amount: 1 },
+  { id: "plume", icon: "🪶", label: "+1 plume !", color: "#ffffff", weight: 3, life: 5 }
+];
+const ARCADE_POWERS = [
+  { id: "magnet", icon: "🧲", label: "Aimant !", color: "#ff6b6b", weight: 35, life: 8, length: 8 },
+  { id: "double", icon: "💰", label: "Pièces ×2 !", color: "#ffd84d", weight: 30, life: 8, length: 10 },
+  { id: "slow", icon: "🐌", label: "Ralenti !", color: "#9bf29b", weight: 20, life: 7, length: 6 },
+  { id: "shield", icon: "🛡️", label: "Bouclier !", color: "#8fd0ff", weight: 15, life: 7 }
+];
 const ARCADE_DUCK = 56;
 const ARCADE_COINS = 6;
 const ARCADE_GOLD_CHANCE = 0.08;
@@ -2291,7 +2312,7 @@ class LeCanard {
     if (this.fishing) return this.fishPond();
     this.text("Des minijeux pour gagner des Coins, des gemmes, des œufs et des canards de collection.");
     this.heading("Chasse aux pièces");
-    this.row("Promène le canard dans tout l'écran avec les flèches", () => `Ramasse les pièces, évite renards, guêpes et chats. Chaque pièce : ${ARCADE_REWARD_S} s de production. Record : ${game().stats.arcadeBest}`,
+    this.row("Vole dans tout l'écran avec les flèches", () => `Le canard tombe si tu ne tiens pas Haut. Ramasse pièces, Pain, gemmes et plumes, attrape les bonus, évite renards, guêpes et chats. Record : ${game().stats.arcadeBest}`,
       this.button("Jouer", () => true, () => this.startArcade()));
     this.heading("Chasse aux œufs");
     this.row("Trouve 6 œufs en 30 secondes", "Chaque œuf : 1 min de production. Les 6 : un œuf bonus", this.button(wait("eggs", "Jouer"), ready("eggs"), () => {
@@ -2640,13 +2661,14 @@ class LeCanard {
   }
 
   // ---- Chasse aux pièces: the duck roams the whole window, steered with the arrow keys. ----
+  // Gravity pulls it down unless you hold Up; it can land and walk along the bottom.
 
   startArcade() {
     if (this.arcade) return;
     if (document.getElementById(PANEL_ID)) this.togglePanel();
     const canvas = document.createElement("canvas");
     canvas.id = ARCADE_ID;
-    canvas.style.cssText = "position:fixed;inset:0;z-index:100010;background:rgba(10,12,16,.82);cursor:none";
+    canvas.style.cssText = "position:fixed;inset:0;z-index:100010;background:transparent;cursor:none";
     document.body.append(canvas);
     const pen = canvas.getContext("2d");
     const fit = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
@@ -2665,12 +2687,18 @@ class LeCanard {
   arcadeReset() {
     const a = this.arcade;
     Object.assign(a, {
-      x: a.canvas.width / 2, y: a.canvas.height / 2, facing: 1, frame: 0, frameAt: 0,
-      coins: [], enemies: [], picked: 0, time: 0, nextEnemy: ARCADE_ENEMY_EVERY_S, safeUntil: ARCADE_SAFE_S,
+      x: a.canvas.width / 2, y: a.canvas.height / 3, vy: 0, facing: 1, frame: 0, frameAt: 0,
+      coins: [], enemies: [], items: [], popups: [], picked: 0, time: 0,
+      nextEnemy: ARCADE_ENEMY_EVERY_S, nextItem: this.arcadeDelay(ARCADE_ITEM_EVERY), nextPower: this.arcadeDelay(ARCADE_POWER_EVERY),
+      safeUntil: ARCADE_SAFE_S, power: {}, shield: false, loot: { bread: 0, fragments: 0, gems: 0, feathers: 0 },
       state: "play", killer: null, reward: 0, best: false
     });
     for (let i = 0; i < ARCADE_COINS; i++) this.arcadeCoin();
     this.arcadeEnemy("renard");
+  }
+
+  arcadeDelay([low, high]) {
+    return low + Math.random() * (high - low);
   }
 
   // Arrow keys (or ZQSD / WASD) move, Escape quits, Enter replays. Discord never sees these keys.
@@ -2687,10 +2715,25 @@ class LeCanard {
     a.keys.add(key);
   }
 
-  arcadeCoin() {
+  arcadeSpot(margin) {
     const a = this.arcade;
-    const margin = 40;
-    a.coins.push({ x: margin + Math.random() * (a.canvas.width - margin * 2), y: margin + Math.random() * (a.canvas.height - margin * 2), gold: Math.random() < ARCADE_GOLD_CHANCE, spin: Math.random() * 6 });
+    return { x: margin + Math.random() * (a.canvas.width - margin * 2), y: margin + 60 + Math.random() * (a.canvas.height - margin * 2 - 60) };
+  }
+
+  arcadeCoin() {
+    this.arcade.coins.push({ ...this.arcadeSpot(40), gold: Math.random() < ARCADE_GOLD_CHANCE, spin: Math.random() * 6 });
+  }
+
+  // Rarer items are both less likely and gone sooner.
+  pickWeighted(list) {
+    let roll = Math.random() * list.reduce((sum, entry) => sum + entry.weight, 0);
+    for (const entry of list) { roll -= entry.weight; if (roll <= 0) return entry; }
+    return list[0];
+  }
+
+  arcadeItem(pool) {
+    const kind = this.pickWeighted(pool);
+    this.arcade.items.push({ ...this.arcadeSpot(50), kind, until: this.arcade.time + kind.life, bob: Math.random() * 6 });
   }
 
   // Each enemy kind moves its own way: foxes chase, wasps bounce fast, cats wander then pounce.
@@ -2722,25 +2765,61 @@ class LeCanard {
     requestAnimationFrame(this.onArcadeFrame);
   }
 
+  powered(name) {
+    return (this.arcade.power[name] ?? 0) > this.arcade.time;
+  }
+
+  arcadePopup(x, y, text, color) {
+    this.arcade.popups.push({ x, y, text, color, until: this.arcade.time + 1.2 });
+  }
+
   arcadeStep(dt, now) {
     const a = this.arcade;
     const w = a.canvas.width, h = a.canvas.height;
+    const half = ARCADE_DUCK / 2;
     a.time += dt;
     const k = a.keys;
-    let dx = (k.has("arrowright") || k.has("d") ? 1 : 0) - (k.has("arrowleft") || k.has("q") || k.has("a") ? 1 : 0);
-    let dy = (k.has("arrowdown") || k.has("s") ? 1 : 0) - (k.has("arrowup") || k.has("z") || k.has("w") ? 1 : 0);
-    if (dx && dy) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
-    a.x = Math.max(ARCADE_DUCK / 2, Math.min(w - ARCADE_DUCK / 2, a.x + dx * ARCADE_SPEED * dt));
-    a.y = Math.max(ARCADE_DUCK / 2, Math.min(h - ARCADE_DUCK / 2, a.y + dy * ARCADE_SPEED * dt));
-    if (dx) a.facing = dx > 0 ? 1 : -1;
-    if ((dx || dy) && now - a.frameAt > 70) { a.frameAt = now; a.frame = (a.frame + 1) % FRAMES; }
+    const right = k.has("arrowright") || k.has("d");
+    const left = k.has("arrowleft") || k.has("q") || k.has("a");
+    const up = k.has("arrowup") || k.has("z") || k.has("w");
+    const down = k.has("arrowdown") || k.has("s");
 
+    // Up flaps against gravity, Down dives faster, nothing held means falling.
+    a.vy += (up ? -ARCADE_LIFT : ARCADE_GRAVITY * (down ? 1.8 : 1)) * dt;
+    a.vy = Math.max(-ARCADE_MAX_RISE, Math.min(ARCADE_MAX_FALL, a.vy));
+    const dx = (right ? 1 : 0) - (left ? 1 : 0);
+    a.x = Math.max(half, Math.min(w - half, a.x + dx * ARCADE_SPEED * dt));
+    a.y += a.vy * dt;
+    if (a.y > h - half) { a.y = h - half; a.vy = 0; }
+    if (a.y < half + 60) { a.y = half + 60; a.vy = Math.max(0, a.vy); }
+    if (dx) a.facing = dx > 0 ? 1 : -1;
+    if ((dx || up) && now - a.frameAt > 70) { a.frameAt = now; a.frame = (a.frame + 1) % FRAMES; }
+
+    const magnet = this.powered("magnet");
     for (const coin of [...a.coins]) {
-      if (Math.hypot(coin.x - a.x, coin.y - a.y) < ARCADE_DUCK / 2 + 12) {
+      if (magnet) {
+        const gx = a.x - coin.x, gy = a.y - coin.y, len = Math.hypot(gx, gy) || 1;
+        if (len < ARCADE_MAGNET_RANGE) { coin.x += (gx / len) * 380 * dt; coin.y += (gy / len) * 380 * dt; }
+      }
+      if (Math.hypot(coin.x - a.x, coin.y - a.y) < half + 12) {
         a.coins.splice(a.coins.indexOf(coin), 1);
-        a.picked += coin.gold ? 5 : 1;
+        const value = (coin.gold ? 5 : 1) * (this.powered("double") ? 2 : 1);
+        a.picked += value;
+        this.arcadePopup(coin.x, coin.y, `+${value}`, "#ffd84d");
         this.arcadeCoin();
         this.chime(coin.gold ? 1500 : 1200);
+      }
+    }
+
+    a.nextItem -= dt;
+    if (a.nextItem <= 0) { a.nextItem = this.arcadeDelay(ARCADE_ITEM_EVERY); this.arcadeItem(ARCADE_ITEMS); }
+    a.nextPower -= dt;
+    if (a.nextPower <= 0) { a.nextPower = this.arcadeDelay(ARCADE_POWER_EVERY); this.arcadeItem(ARCADE_POWERS); }
+    for (const item of [...a.items]) {
+      if (a.time > item.until) { a.items.splice(a.items.indexOf(item), 1); continue; }
+      if (Math.hypot(item.x - a.x, item.y - a.y) < half + 16) {
+        a.items.splice(a.items.indexOf(item), 1);
+        this.arcadeCollect(item);
       }
     }
 
@@ -2750,8 +2829,8 @@ class LeCanard {
       const kinds = a.time < 20 ? ["renard", "guepe"] : ["renard", "guepe", "chat"];
       this.arcadeEnemy(kinds[Math.floor(Math.random() * kinds.length)]);
     }
-    const speedUp = 1 + a.time / 90;
-    for (const e of a.enemies) {
+    const speedUp = (1 + a.time / 90) * (this.powered("slow") ? 0.4 : 1);
+    for (const e of [...a.enemies]) {
       e.timer += dt;
       if (e.kind === "renard") {
         const gx = a.x - e.x, gy = a.y - e.y, len = Math.hypot(gx, gy) || 1;
@@ -2764,9 +2843,9 @@ class LeCanard {
       } else {
         if (e.dashing > 0) {
           e.dashing -= dt;
-          e.x += e.vx * 420 * dt; e.y += e.vy * 420 * dt;
+          e.x += e.vx * 420 * speedUp * dt; e.y += e.vy * 420 * speedUp * dt;
         } else {
-          e.x += e.vx * 60 * dt; e.y += e.vy * 60 * dt;
+          e.x += e.vx * 60 * speedUp * dt; e.y += e.vy * 60 * speedUp * dt;
           if (e.timer > 2.5) {
             e.timer = 0;
             const gx = a.x - e.x, gy = a.y - e.y, len = Math.hypot(gx, gy) || 1;
@@ -2776,8 +2855,36 @@ class LeCanard {
         if (e.x < -40 || e.x > w + 40) e.vx *= -1;
         if (e.y < -40 || e.y > h + 40) e.vy *= -1;
       }
-      if (a.time > a.safeUntil && Math.hypot(e.x - a.x, e.y - a.y) < ARCADE_DUCK / 2 + 10) this.arcadeOver(e.kind);
+      if (a.time > a.safeUntil && Math.hypot(e.x - a.x, e.y - a.y) < half + 10) {
+        if (a.shield) {
+          a.shield = false;
+          a.safeUntil = a.time + 1.5;
+          a.enemies.splice(a.enemies.indexOf(e), 1);
+          this.arcadePopup(a.x, a.y - 30, "Bouclier !", "#8fd0ff");
+          this.chime(700);
+        } else {
+          this.arcadeOver(e.kind);
+          return;
+        }
+      }
     }
+    a.popups = a.popups.filter((p) => p.until > a.time);
+  }
+
+  // Loot goes straight into your game; power-ups last a few seconds.
+  arcadeCollect(item) {
+    const a = this.arcade;
+    const game = this.game;
+    const kind = item.kind;
+    if (kind.id === "pain") { addBread(game, kind.amount); a.loot.bread += kind.amount; }
+    else if (kind.id === "eclat") { addFragments(game, kind.amount); a.loot.fragments += kind.amount; }
+    else if (kind.id === "gemme") { game.gems += kind.amount; a.loot.gems += kind.amount; }
+    else if (kind.id === "plume") { game.feathers += 1; game.feathersTotal += 1; a.loot.feathers += 1; }
+    else if (kind.id === "shield") a.shield = true;
+    else a.power[kind.id] = a.time + kind.length;
+    game.stats.arcadeItems++;
+    this.arcadePopup(item.x, item.y, kind.label, kind.color);
+    this.chime(kind.length || kind.id === "shield" ? 900 : 1400);
   }
 
   arcadeOver(kind) {
@@ -2797,6 +2904,18 @@ class LeCanard {
     this.tone("sawtooth", 300, 80, 0.08, 0.5);
   }
 
+  // Text with a dark outline, so it reads on any Discord background.
+  arcadeText(text, x, y, font, color, align = "left") {
+    const pen = this.arcade.pen;
+    pen.font = font;
+    pen.textAlign = align;
+    pen.lineWidth = 4;
+    pen.strokeStyle = "rgba(10,12,16,.9)";
+    pen.strokeText(text, x, y);
+    pen.fillStyle = color;
+    pen.fillText(text, x, y);
+  }
+
   arcadeDraw(now) {
     const a = this.arcade;
     const pen = a.pen;
@@ -2806,12 +2925,25 @@ class LeCanard {
     for (const coin of a.coins) {
       const squash = Math.abs(Math.cos(now / 250 + coin.spin));
       pen.fillStyle = coin.gold ? "#fff1a8" : "#ffd84d";
-      pen.strokeStyle = "#b98a12";
+      pen.strokeStyle = "#7a5a0a";
       pen.lineWidth = 2;
       pen.beginPath();
       pen.ellipse(coin.x, coin.y, Math.max(2, (coin.gold ? 14 : 10) * squash), coin.gold ? 14 : 10, 0, 0, Math.PI * 2);
       pen.fill();
       pen.stroke();
+    }
+    for (const item of a.items) {
+      const left = item.until - a.time;
+      if (left < 2 && Math.floor(now / 150) % 2 === 0) continue;
+      const y = item.y + Math.sin(now / 300 + item.bob) * 5;
+      pen.save();
+      pen.shadowColor = item.kind.color;
+      pen.shadowBlur = 14;
+      pen.font = "28px sans-serif";
+      pen.textAlign = "center";
+      pen.textBaseline = "middle";
+      pen.fillText(item.kind.icon, item.x, y);
+      pen.restore();
     }
     for (const e of a.enemies) {
       const art = this.sprites[e.kind][0];
@@ -2820,6 +2952,7 @@ class LeCanard {
       pen.save();
       pen.translate(e.x, e.y);
       if (e.vx > 0) pen.scale(-1, 1);
+      if (this.powered("slow")) pen.globalAlpha = 0.6;
       pen.drawImage(art, -dw / 2, -dh / 2, dw, dh);
       pen.restore();
     }
@@ -2827,22 +2960,31 @@ class LeCanard {
     if (this.strip.complete && !blink) {
       pen.save();
       pen.translate(a.x, a.y);
+      if (a.shield) {
+        pen.strokeStyle = "rgba(143,208,255,.9)";
+        pen.lineWidth = 3;
+        pen.beginPath();
+        pen.arc(0, 0, ARCADE_DUCK / 2 + 8, 0, Math.PI * 2);
+        pen.stroke();
+      }
       pen.scale(-a.facing, 1);
       if (this.skinFilter()) pen.filter = this.skinFilter();
       pen.drawImage(this.strip, a.frame * CELL, 0, CELL, CELL, -ARCADE_DUCK / 2, -ARCADE_DUCK / 2, ARCADE_DUCK, ARCADE_DUCK);
       pen.restore();
     }
-    pen.fillStyle = "#ffffff";
-    pen.font = "700 20px sans-serif";
-    pen.textAlign = "left";
-    pen.fillText(`Pièces : ${a.picked}    Temps : ${Math.floor(a.time)} s    Record : ${this.game.stats.arcadeBest}`, 20, 34);
-    pen.font = "14px sans-serif";
-    pen.fillStyle = "#b5bac1";
-    pen.fillText("Flèches (ou ZQSD) pour bouger · P pause · Échap pour quitter · Évite les renards, guêpes et chats !", 20, 58);
+    for (const p of a.popups) {
+      const rise = (1.2 - (p.until - a.time)) * 40;
+      this.arcadeText(p.text, p.x, p.y - rise, "700 16px sans-serif", p.color, "center");
+    }
+    this.arcadeText(`Pièces : ${a.picked}    Temps : ${Math.floor(a.time)} s    Record : ${this.game.stats.arcadeBest}`, 20, 34, "700 20px sans-serif", "#ffffff");
+    const active = ARCADE_POWERS.filter((p) => p.length && this.powered(p.id)).map((p) => `${p.icon} ${Math.ceil(a.power[p.id] - a.time)} s`);
+    if (a.shield) active.push("🛡️");
+    this.arcadeText(active.length ? `Bonus : ${active.join("   ")}` : "Haut pour voler, Bas pour plonger · P pause · Échap pour quitter", 20, 58, "14px sans-serif", active.length ? "#8fd0ff" : "#dbdee1");
     if (a.state === "pause") this.arcadeBanner("Pause", "Appuie sur P pour reprendre");
     if (a.state === "over") {
       const names = { renard: "un renard", guepe: "une guêpe", chat: "un chat" };
-      this.arcadeBanner(`Attrapé par ${names[a.killer]} !`, `${a.picked} pièces · +${format(a.reward)} Coins${a.best ? " · NOUVEAU RECORD !" : ""}\nEntrée pour rejouer · Échap pour quitter`);
+      const loot = [a.loot.bread ? `${a.loot.bread} Pain` : "", a.loot.fragments ? `${a.loot.fragments} éclats` : "", a.loot.gems ? `${a.loot.gems} gemme(s)` : "", a.loot.feathers ? `${a.loot.feathers} plume(s)` : ""].filter(Boolean).join(" · ");
+      this.arcadeBanner(`Attrapé par ${names[a.killer] ?? "un méchant"} !`, `${a.picked} pièces · +${format(a.reward)} Coins${a.best ? " · NOUVEAU RECORD !" : ""}${loot ? `\nTrouvé : ${loot}` : ""}\nEntrée pour rejouer · Échap pour quitter`);
     }
   }
 
@@ -2851,14 +2993,14 @@ class LeCanard {
     const pen = a.pen;
     const w = a.canvas.width, h = a.canvas.height;
     pen.fillStyle = "rgba(17,18,20,.92)";
-    pen.fillRect(w / 2 - 260, h / 2 - 80, 520, 160);
+    pen.fillRect(w / 2 - 280, h / 2 - 90, 560, 190);
     pen.textAlign = "center";
     pen.fillStyle = "#ffd84d";
     pen.font = "700 30px sans-serif";
-    pen.fillText(title, w / 2, h / 2 - 25);
+    pen.fillText(title, w / 2, h / 2 - 35);
     pen.fillStyle = "#ffffff";
     pen.font = "16px sans-serif";
-    text.split("\n").forEach((line, i) => pen.fillText(line, w / 2, h / 2 + 15 + i * 24));
+    text.split("\n").forEach((line, i) => pen.fillText(line, w / 2, h / 2 + 5 + i * 24));
   }
 
   skinFilter() {

@@ -1,7 +1,7 @@
 {
-    "version":  23,
-    "published":  "2026-11-14T05:34:41.1754775Z",
-    "notes":  "Le canard 4.3 : nouveau mini-jeu Chasse aux pièces au clavier. Yap-o-mètre, Bonk et YABDP4Nitro retirés.",
+    "version":  24,
+    "published":  "2026-11-14T05:40:58.3856867Z",
+    "notes":  "Le canard 4.4 : Chasse aux pièces avec gravité, fond transparent, Pain, éclats, gemmes et plumes à ramasser, et 4 bonus (aimant, pièces x2, ralenti, bouclier).",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -45,8 +45,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "1cf54afcf031b0e6a0b93131419dae17a2a3299d370d11808ec34cc9f900bb4e",
-                        "size":  221090
+                        "sha256":  "9917b6d0b443fdc6fc3cc48af8fd1ea7e1efc93c4f3224174c7797125febd7cc",
+                        "size":  227673
                     },
                     {
                         "name":  "MentionFix.plugin.js",
