@@ -1,7 +1,7 @@
 {
-    "version":  24,
-    "published":  "2026-11-14T05:40:58.3856867Z",
-    "notes":  "Le canard 4.4 : Chasse aux pièces avec gravité, fond transparent, Pain, éclats, gemmes et plumes à ramasser, et 4 bonus (aimant, pièces x2, ralenti, bouclier).",
+    "version":  25,
+    "published":  "2026-11-14T05:43:45.1125646Z",
+    "notes":  "",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
