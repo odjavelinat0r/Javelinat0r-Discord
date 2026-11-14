@@ -1,7 +1,7 @@
 {
-    "version":  22,
-    "published":  "2026-11-09T06:06:55.7054518Z",
-    "notes":  "",
+    "version":  23,
+    "published":  "2026-11-14T05:34:41.1754775Z",
+    "notes":  "Le canard 4.3 : nouveau mini-jeu Chasse aux pièces au clavier. Yap-o-mètre, Bonk et YABDP4Nitro retirés.",
     "plugins":  [
                     {
                         "name":  "0BDFDB.data.json",
@@ -22,11 +22,6 @@
                         "name":  "AutoDNDOnGame.plugin.js",
                         "sha256":  "b5067b3a7c67bf1e213cf5c5d40df10dd7afd28817137f99986265965d5834a5",
                         "size":  11497
-                    },
-                    {
-                        "name":  "Bonk.plugin.js",
-                        "sha256":  "c8c06dc632e80524dfb1974ab4eae21e2f4e3e4591c0855f946688e1f4c6a2a4",
-                        "size":  4077
                     },
                     {
                         "name":  "BypassBlockedOrIgnored.plugin.js",
@@ -50,8 +45,8 @@
                     },
                     {
                         "name":  "LeCanard.plugin.js",
-                        "sha256":  "9015c2bd73cf5ec340ca132b334026e5e7bb6fd7d8bf60d62fe9c3ffd523312f",
-                        "size":  210098
+                        "sha256":  "1cf54afcf031b0e6a0b93131419dae17a2a3299d370d11808ec34cc9f900bb4e",
+                        "size":  221090
                     },
                     {
                         "name":  "MentionFix.plugin.js",
@@ -87,16 +82,6 @@
                         "name":  "VoiceMessages.plugin.js",
                         "sha256":  "72a88a1ea04ea362b851c333b7af57f431acf7ea43f0edac969ac52a9173d275",
                         "size":  26927
-                    },
-                    {
-                        "name":  "YABDP4Nitro.plugin.js",
-                        "sha256":  "73b529073c6d9b01328a022c4306eacaadc497d8f93090ce21501d95e06d1ee8",
-                        "size":  320795
-                    },
-                    {
-                        "name":  "Yapometre.plugin.js",
-                        "sha256":  "6f1b29566f14605abe7c1ac992d3490adc324f8f21d46c5bd101b3e379fdee3a",
-                        "size":  7431
                     }
                 ],
     "themes":  [

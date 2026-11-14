@@ -1,8 +1,8 @@
 /**
  * @name LeCanard
  * @author Kerminat0r
- * @version 4.2.0
- * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux, collection de canards et skins, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
+ * @version 4.3.0
+ * @description Un énorme jeu incrémental dans Discord : 18 bâtiments, 100+ améliorations, événements, minijeux (dont la Chasse aux pièces au clavier), collection de canards et skins, chapeaux, expéditions, marché du Pain et 150+ succès. Clic sur le canard pour gagner, clic droit pour ouvrir le jeu.
  */
 
 // Golden duck sound: "Mallard Duck" by Mike Koenig (https://soundbible.com/1852-Mallard-Duck.html),
@@ -246,7 +246,7 @@ const QUESTS = [
   { id: "jeux", name: "Joue {n} parties de minijeux", stat: "gamesPlayed", goal: 3 }
 ];
 
-const STATS = ["leaps", "goldCaught", "expeditions", "foxes", "trades", "voiceSeconds", "gifts", "rainDucks", "seagulls", "clovers", "fish", "racesWon", "racesLost", "slotsPlayed", "jackpots", "eggsFound", "gamesPlayed", "lostDucks", "bestPerSecond", "fastestMinute", "hatched"];
+const STATS = ["leaps", "goldCaught", "expeditions", "foxes", "trades", "voiceSeconds", "gifts", "rainDucks", "seagulls", "clovers", "fish", "racesWon", "racesLost", "slotsPlayed", "jackpots", "eggsFound", "gamesPlayed", "lostDucks", "bestPerSecond", "fastestMinute", "hatched", "arcadeGames", "arcadeCoins", "arcadeBest"];
 
 const ACHIEVEMENTS = [];
 function tiers(prefix, label, read, goals, secret) {
@@ -284,6 +284,8 @@ tiers("s-lost", "Capitaine maladroit", (g) => g.stats.lostDucks, [100], true);
 tiers("s-shiny", "Ça brille !", (g) => g.ducks.filter((d) => d.shiny).length, [1], true);
 tiers("s-poor", "Fauché", (g) => (g.lifetime > 1e6 && g.coins < 1 ? 1 : 0), [1], true);
 tiers("s-goldfish", "Poisson doré", (g) => g.stats.goldfish ?? 0, [1], true);
+tiers("arcade", "Chasseur de pièces", (g) => g.stats.arcadeCoins, [50, 500, 5000]);
+tiers("arcade-best", "Esquiveur", (g) => g.stats.arcadeBest, [25, 75, 150]);
 
 const fresh = () => ({
   version: SAVE_VERSION, coins: 0, run: 0, lifetime: 0, clicks: 0, feathers: 0, feathersTotal: 0,
@@ -1086,6 +1088,14 @@ const SLEEP_AFTER_MS = 5 * 60000;
 const PANIC_PINGS = 3;
 const PANIC_WINDOW_MS = 30000;
 const WATCH_MS = 1000;
+const ARCADE_ID = "le-canard-arcade";
+const ARCADE_SPEED = 300;
+const ARCADE_DUCK = 56;
+const ARCADE_COINS = 6;
+const ARCADE_GOLD_CHANCE = 0.08;
+const ARCADE_ENEMY_EVERY_S = 8;
+const ARCADE_SAFE_S = 2;
+const ARCADE_REWARD_S = 10;
 const TICK_MS = 250;
 const SAVE_MS = 15000;
 const MAX_TICK_S = 60;
@@ -1159,6 +1169,8 @@ const ART = {
   multivers: ["..c.......m.......y...", ".ccc.....mmm.....yyy..", "ccccc...mmmmm...yyyyy.", ".ccc.....mmm.....yyy..", "..c...v...m...v...y...", ".....vvv.....vvv......", "....vvvvv...vvvvv.....", ".....vvv.....vvv......", "......v.......v.......", "...nnnnnnnnnnnnnnnn..."],
   divin: ["........yyyyyy........", ".......y......y.......", "........yyyyyy........", "..........yy..........", ".........yyyyo........", "........yyykyy........", "..yy....yyyyyy....yy..", "...yyyyyyyyyyyyyyyy...", "....yyyyyyyyyyyyyy....", ".....yyyyyyyyyyyy.....", "......wwwwwwwwww......"],
   chien: ["......DD....", ".....dddDD..", ".....ddkdd..", "dd...ddddk..", ".ddddddddd..", ".ddddddddd..", ".dd.dd.dd...", ".dd.dd.dd..."],
+  guepe: ["...ww.ww..", "..wwwwwww.", ".kyykyykk.", "kyykyykyyk", ".kyykyykk.", "..k..k..k."],
+  chat: ["w.....w...", "ww...ww...", "wwwwwww...", "wkwwwkw..w", "wwwwwww..w", ".wwwwwwwww", ".wwwwwwwww", ".w.w..w.w."],
   renard: [".o..o.......", ".oooo.......", ".okook...oo.", ".ooooo..ooo.", "..oooooooow.", "..oooooooow.", "..o.oo.o....", "..k.kk.k...."],
   mouette: ["ww........ww", ".www....www.", "..wwwwwwww..", "....wwkwo...", ".....wwww...", "......ss...."],
   trefle: ["..gg..gg..", ".gggggggg.", ".gggggggg.", "..gggggg..", ".gggggggg.", ".gggggggg.", "..gg..gg..", "....GG....", "....G.....", "...G......"]
@@ -1252,6 +1264,7 @@ class LeCanard {
     this.save();
     for (const id of [DUCK_ID, GOLD_ID, FOX_ID, GULL_ID, CLOVER_ID, PANEL_ID, WORLD_ID, "le-canard-retour", "le-canard-flash"]) document.getElementById(id)?.remove();
     for (const node of document.querySelectorAll(".le-canard-piece")) node.remove();
+    this.endArcade();
     for (const node of document.querySelectorAll(`.${RAIN_CLASS}`)) node.remove();
     this.audio?.close?.();
     this.audio = null;
@@ -2277,6 +2290,9 @@ class LeCanard {
     if (this.race) return this.raceTrack();
     if (this.fishing) return this.fishPond();
     this.text("Des minijeux pour gagner des Coins, des gemmes, des œufs et des canards de collection.");
+    this.heading("Chasse aux pièces");
+    this.row("Promène le canard dans tout l'écran avec les flèches", () => `Ramasse les pièces, évite renards, guêpes et chats. Chaque pièce : ${ARCADE_REWARD_S} s de production. Record : ${game().stats.arcadeBest}`,
+      this.button("Jouer", () => true, () => this.startArcade()));
     this.heading("Chasse aux œufs");
     this.row("Trouve 6 œufs en 30 secondes", "Chaque œuf : 1 min de production. Les 6 : un œuf bonus", this.button(wait("eggs", "Jouer"), ready("eggs"), () => {
       if (!useGame(game(), "eggs", Date.now())) return;
@@ -2621,6 +2637,244 @@ class LeCanard {
   chime(pitch) {
     if (BdApi.Data.load(PLUGIN, "eventSounds") !== true) return;
     this.tone("triangle", pitch, pitch * 1.5, 0.06, 0.25);
+  }
+
+  // ---- Chasse aux pièces: the duck roams the whole window, steered with the arrow keys. ----
+
+  startArcade() {
+    if (this.arcade) return;
+    if (document.getElementById(PANEL_ID)) this.togglePanel();
+    const canvas = document.createElement("canvas");
+    canvas.id = ARCADE_ID;
+    canvas.style.cssText = "position:fixed;inset:0;z-index:100010;background:rgba(10,12,16,.82);cursor:none";
+    document.body.append(canvas);
+    const pen = canvas.getContext("2d");
+    const fit = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    fit();
+    this.arcade = { canvas, pen, fit, keys: new Set(), state: "play" };
+    this.arcadeReset();
+    this.onArcadeKey = (event) => this.arcadeKey(event);
+    window.addEventListener("keydown", this.onArcadeKey, true);
+    window.addEventListener("keyup", this.onArcadeKey, true);
+    window.addEventListener("resize", fit);
+    this.arcadeLast = performance.now();
+    this.onArcadeFrame = (now) => this.arcadeFrame(now);
+    requestAnimationFrame(this.onArcadeFrame);
+  }
+
+  arcadeReset() {
+    const a = this.arcade;
+    Object.assign(a, {
+      x: a.canvas.width / 2, y: a.canvas.height / 2, facing: 1, frame: 0, frameAt: 0,
+      coins: [], enemies: [], picked: 0, time: 0, nextEnemy: ARCADE_ENEMY_EVERY_S, safeUntil: ARCADE_SAFE_S,
+      state: "play", killer: null, reward: 0, best: false
+    });
+    for (let i = 0; i < ARCADE_COINS; i++) this.arcadeCoin();
+    this.arcadeEnemy("renard");
+  }
+
+  // Arrow keys (or ZQSD / WASD) move, Escape quits, Enter replays. Discord never sees these keys.
+  arcadeKey(event) {
+    const a = this.arcade;
+    if (!a) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const key = event.key.toLowerCase();
+    if (event.type === "keyup") { a.keys.delete(key); return; }
+    if (key === "escape") { this.endArcade(); return; }
+    if (key === "enter" && a.state === "over") { this.arcadeReset(); return; }
+    if (key === "p" && a.state !== "over") { a.state = a.state === "pause" ? "play" : "pause"; return; }
+    a.keys.add(key);
+  }
+
+  arcadeCoin() {
+    const a = this.arcade;
+    const margin = 40;
+    a.coins.push({ x: margin + Math.random() * (a.canvas.width - margin * 2), y: margin + Math.random() * (a.canvas.height - margin * 2), gold: Math.random() < ARCADE_GOLD_CHANCE, spin: Math.random() * 6 });
+  }
+
+  // Each enemy kind moves its own way: foxes chase, wasps bounce fast, cats wander then pounce.
+  arcadeEnemy(kind) {
+    const a = this.arcade;
+    const side = Math.floor(Math.random() * 4);
+    const w = a.canvas.width, h = a.canvas.height;
+    const x = side === 0 ? -30 : side === 1 ? w + 30 : Math.random() * w;
+    const y = side === 2 ? -30 : side === 3 ? h + 30 : Math.random() * h;
+    const angle = Math.random() * Math.PI * 2;
+    a.enemies.push({ kind, x, y, vx: Math.cos(angle), vy: Math.sin(angle), timer: 0, dashing: 0 });
+  }
+
+  arcadeFrame(now) {
+    const a = this.arcade;
+    if (!a) return;
+    if (a.canvas.width !== window.innerWidth || a.canvas.height !== window.innerHeight) {
+      // The window was resized, or the game started before the window had a size.
+      const wasEmpty = a.canvas.width < 100 || a.canvas.height < 100;
+      a.fit();
+      if (wasEmpty) this.arcadeReset();
+      a.x = Math.min(a.x, a.canvas.width);
+      a.y = Math.min(a.y, a.canvas.height);
+    }
+    const dt = Math.max(0, Math.min(0.05, (now - this.arcadeLast) / 1000));
+    this.arcadeLast = now;
+    if (a.state === "play") this.arcadeStep(dt, now);
+    this.arcadeDraw(now);
+    requestAnimationFrame(this.onArcadeFrame);
+  }
+
+  arcadeStep(dt, now) {
+    const a = this.arcade;
+    const w = a.canvas.width, h = a.canvas.height;
+    a.time += dt;
+    const k = a.keys;
+    let dx = (k.has("arrowright") || k.has("d") ? 1 : 0) - (k.has("arrowleft") || k.has("q") || k.has("a") ? 1 : 0);
+    let dy = (k.has("arrowdown") || k.has("s") ? 1 : 0) - (k.has("arrowup") || k.has("z") || k.has("w") ? 1 : 0);
+    if (dx && dy) { dx *= Math.SQRT1_2; dy *= Math.SQRT1_2; }
+    a.x = Math.max(ARCADE_DUCK / 2, Math.min(w - ARCADE_DUCK / 2, a.x + dx * ARCADE_SPEED * dt));
+    a.y = Math.max(ARCADE_DUCK / 2, Math.min(h - ARCADE_DUCK / 2, a.y + dy * ARCADE_SPEED * dt));
+    if (dx) a.facing = dx > 0 ? 1 : -1;
+    if ((dx || dy) && now - a.frameAt > 70) { a.frameAt = now; a.frame = (a.frame + 1) % FRAMES; }
+
+    for (const coin of [...a.coins]) {
+      if (Math.hypot(coin.x - a.x, coin.y - a.y) < ARCADE_DUCK / 2 + 12) {
+        a.coins.splice(a.coins.indexOf(coin), 1);
+        a.picked += coin.gold ? 5 : 1;
+        this.arcadeCoin();
+        this.chime(coin.gold ? 1500 : 1200);
+      }
+    }
+
+    a.nextEnemy -= dt;
+    if (a.nextEnemy <= 0) {
+      a.nextEnemy = ARCADE_ENEMY_EVERY_S;
+      const kinds = a.time < 20 ? ["renard", "guepe"] : ["renard", "guepe", "chat"];
+      this.arcadeEnemy(kinds[Math.floor(Math.random() * kinds.length)]);
+    }
+    const speedUp = 1 + a.time / 90;
+    for (const e of a.enemies) {
+      e.timer += dt;
+      if (e.kind === "renard") {
+        const gx = a.x - e.x, gy = a.y - e.y, len = Math.hypot(gx, gy) || 1;
+        e.vx = gx / len; e.vy = gy / len;
+        e.x += e.vx * 95 * speedUp * dt; e.y += e.vy * 95 * speedUp * dt;
+      } else if (e.kind === "guepe") {
+        e.x += e.vx * 230 * speedUp * dt; e.y += e.vy * 230 * speedUp * dt;
+        if (e.x < 0 || e.x > w) { e.vx *= -1; e.x = Math.max(0, Math.min(w, e.x)); }
+        if (e.y < 0 || e.y > h) { e.vy *= -1; e.y = Math.max(0, Math.min(h, e.y)); }
+      } else {
+        if (e.dashing > 0) {
+          e.dashing -= dt;
+          e.x += e.vx * 420 * dt; e.y += e.vy * 420 * dt;
+        } else {
+          e.x += e.vx * 60 * dt; e.y += e.vy * 60 * dt;
+          if (e.timer > 2.5) {
+            e.timer = 0;
+            const gx = a.x - e.x, gy = a.y - e.y, len = Math.hypot(gx, gy) || 1;
+            e.vx = gx / len; e.vy = gy / len; e.dashing = 0.6;
+          }
+        }
+        if (e.x < -40 || e.x > w + 40) e.vx *= -1;
+        if (e.y < -40 || e.y > h + 40) e.vy *= -1;
+      }
+      if (a.time > a.safeUntil && Math.hypot(e.x - a.x, e.y - a.y) < ARCADE_DUCK / 2 + 10) this.arcadeOver(e.kind);
+    }
+  }
+
+  arcadeOver(kind) {
+    const a = this.arcade;
+    a.state = "over";
+    a.killer = kind;
+    const game = this.game;
+    a.reward = perSecond(game) * ARCADE_REWARD_S * a.picked * gameBonus(game);
+    earn(game, a.reward);
+    game.stats.arcadeGames++;
+    game.stats.arcadeCoins += a.picked;
+    a.best = a.picked > game.stats.arcadeBest;
+    game.stats.arcadeBest = Math.max(game.stats.arcadeBest, a.picked);
+    game.stats.gamesPlayed++;
+    this.announce(checkGoals(game));
+    this.save();
+    this.tone("sawtooth", 300, 80, 0.08, 0.5);
+  }
+
+  arcadeDraw(now) {
+    const a = this.arcade;
+    const pen = a.pen;
+    const w = a.canvas.width, h = a.canvas.height;
+    pen.clearRect(0, 0, w, h);
+    pen.imageSmoothingEnabled = false;
+    for (const coin of a.coins) {
+      const squash = Math.abs(Math.cos(now / 250 + coin.spin));
+      pen.fillStyle = coin.gold ? "#fff1a8" : "#ffd84d";
+      pen.strokeStyle = "#b98a12";
+      pen.lineWidth = 2;
+      pen.beginPath();
+      pen.ellipse(coin.x, coin.y, Math.max(2, (coin.gold ? 14 : 10) * squash), coin.gold ? 14 : 10, 0, 0, Math.PI * 2);
+      pen.fill();
+      pen.stroke();
+    }
+    for (const e of a.enemies) {
+      const art = this.sprites[e.kind][0];
+      const scale = 3;
+      const dw = art.width * scale, dh = art.height * scale;
+      pen.save();
+      pen.translate(e.x, e.y);
+      if (e.vx > 0) pen.scale(-1, 1);
+      pen.drawImage(art, -dw / 2, -dh / 2, dw, dh);
+      pen.restore();
+    }
+    const blink = a.time < a.safeUntil && Math.floor(now / 120) % 2 === 0;
+    if (this.strip.complete && !blink) {
+      pen.save();
+      pen.translate(a.x, a.y);
+      pen.scale(-a.facing, 1);
+      if (this.skinFilter()) pen.filter = this.skinFilter();
+      pen.drawImage(this.strip, a.frame * CELL, 0, CELL, CELL, -ARCADE_DUCK / 2, -ARCADE_DUCK / 2, ARCADE_DUCK, ARCADE_DUCK);
+      pen.restore();
+    }
+    pen.fillStyle = "#ffffff";
+    pen.font = "700 20px sans-serif";
+    pen.textAlign = "left";
+    pen.fillText(`Pièces : ${a.picked}    Temps : ${Math.floor(a.time)} s    Record : ${this.game.stats.arcadeBest}`, 20, 34);
+    pen.font = "14px sans-serif";
+    pen.fillStyle = "#b5bac1";
+    pen.fillText("Flèches (ou ZQSD) pour bouger · P pause · Échap pour quitter · Évite les renards, guêpes et chats !", 20, 58);
+    if (a.state === "pause") this.arcadeBanner("Pause", "Appuie sur P pour reprendre");
+    if (a.state === "over") {
+      const names = { renard: "un renard", guepe: "une guêpe", chat: "un chat" };
+      this.arcadeBanner(`Attrapé par ${names[a.killer]} !`, `${a.picked} pièces · +${format(a.reward)} Coins${a.best ? " · NOUVEAU RECORD !" : ""}\nEntrée pour rejouer · Échap pour quitter`);
+    }
+  }
+
+  arcadeBanner(title, text) {
+    const a = this.arcade;
+    const pen = a.pen;
+    const w = a.canvas.width, h = a.canvas.height;
+    pen.fillStyle = "rgba(17,18,20,.92)";
+    pen.fillRect(w / 2 - 260, h / 2 - 80, 520, 160);
+    pen.textAlign = "center";
+    pen.fillStyle = "#ffd84d";
+    pen.font = "700 30px sans-serif";
+    pen.fillText(title, w / 2, h / 2 - 25);
+    pen.fillStyle = "#ffffff";
+    pen.font = "16px sans-serif";
+    text.split("\n").forEach((line, i) => pen.fillText(line, w / 2, h / 2 + 15 + i * 24));
+  }
+
+  skinFilter() {
+    const entry = CATALOGUE.find((c) => c.id === this.game.skin);
+    return entry ? `hue-rotate(${entry.hue}deg) saturate(1.2)` : "";
+  }
+
+  endArcade() {
+    const a = this.arcade;
+    if (!a) return;
+    if (a.state !== "over" && a.picked > 0) this.arcadeOver("abandon");
+    window.removeEventListener("keydown", this.onArcadeKey, true);
+    window.removeEventListener("keyup", this.onArcadeKey, true);
+    window.removeEventListener("resize", a.fit);
+    a.canvas.remove();
+    this.arcade = null;
   }
 
   getSettingsPanel() {
